@@ -157,6 +157,7 @@ instance key for instance routes. The complete reference will be published as an
 |---|---|---|
 | `POST` | `/instances` | Create an instance |
 | `GET` | `/instances` | List instances |
+| `POST` | `/instances/{id}/connect` | Start the connection (generates the QR code when not linked) |
 | `GET` | `/instances/{id}/qr` | Get the QR code to connect |
 | `POST` | `/instances/{id}/pair` | Connect with a pairing code (phone number) |
 | `POST` | `/instances/{id}/logout` | Disconnect the number |

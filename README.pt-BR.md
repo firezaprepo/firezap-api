@@ -158,6 +158,7 @@ um arquivo OpenAPI.
 |---|---|---|
 | `POST` | `/instances` | Criar uma instância |
 | `GET` | `/instances` | Listar instâncias |
+| `POST` | `/instances/{id}/connect` | Iniciar a conexão (gera o QR code quando não está vinculada) |
 | `GET` | `/instances/{id}/qr` | Obter o QR code para conectar |
 | `POST` | `/instances/{id}/pair` | Conectar com código de pareamento (número de telefone) |
 | `POST` | `/instances/{id}/logout` | Desconectar o número |
