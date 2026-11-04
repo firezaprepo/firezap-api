@@ -1,0 +1,41 @@
+# Binaries
+/bin/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go
+/vendor/
+go.work
+go.work.sum
+coverage.*
+
+# Environment and secrets — never commit these
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local data (sessions, media, databases)
+/data/
+/media/
+*.db
+*.sqlite
+*.sqlite3
+
+# Dashboard build
+/web/node_modules/
+/web/dist/
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
