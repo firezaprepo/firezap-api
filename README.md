@@ -1,0 +1,2 @@
+# firezap-api
+WhatApp API
