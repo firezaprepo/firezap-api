@@ -13,10 +13,10 @@ import (
 	"time"
 )
 
-// ErrBlockedAddress is returned when a webhook URL points to an address the server must not
+// ErrBlockedAddress is returned when a webhook or media URL points to an address the server must not
 // reach. Without this check, anyone who can set a webhook could make the server send requests
 // into its own network (SSRF): databases, admin panels, cloud metadata.
-var ErrBlockedAddress = errors.New("webhook address not allowed: it points to a loopback, private, link-local or reserved network")
+var ErrBlockedAddress = errors.New("address not allowed: it points to a loopback, private, link-local or reserved network")
 
 // AddressPolicy decides which IP addresses webhook requests may reach.
 type AddressPolicy struct {
