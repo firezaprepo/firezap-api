@@ -141,6 +141,7 @@ All settings come from environment variables (`.env`). The full list will live i
 | `PUBLIC_URL` | Public address of your server (used in media links) | — |
 | `MEDIA_STORAGE` | `local` or `s3` | `local` |
 | `WEBHOOK_TIMEOUT` | Webhook request timeout, in seconds | `10` |
+| `WEBHOOK_ALLOW_PRIVATE` | Allow webhooks to loopback and private networks (same host or Docker network). Keep `false` if other people can set webhooks; cloud metadata stays blocked | `false` |
 | `DEFAULT_LANGUAGE` | Dashboard language: `en` or `pt-BR` | `en` |
 | `LOG_LEVEL` | `debug`, `info`, `warn` or `error` | `info` |
 
@@ -190,6 +191,10 @@ Each instance can send events to a URL of your choice:
 | `connection.update` | The instance connected, disconnected or needs a new QR code |
 | `group.update` | Group name, participants or settings changed |
 | `call.received` | Incoming call (logged; calls are not answered by the API) |
+
+`message.received` carries `sender`/`chat` as WhatsApp sends them — often a LID (`…@lid`), which is not a phone number — plus `senderPn` and, in private chats, `chatPn` with the phone-number JID when it is known. Deleted and edited messages arrive with `type` `revoke` or `edit` and the affected message id in `target`.
+
+The webhook URL must be an `http` or `https` address that does not point to loopback, private or link-local networks (see `WEBHOOK_ALLOW_PRIVATE`). The secret you send is never echoed back; if you leave it empty, one is generated and shown once.
 
 Every request carries an `X-FireZAP-Signature` header (HMAC-SHA256 of the body with your
 webhook secret), so you can confirm it came from your server. Failed deliveries are retried

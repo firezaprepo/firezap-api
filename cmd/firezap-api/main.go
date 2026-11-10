@@ -69,7 +69,10 @@ func run() error {
 		return fmt.Errorf("prepare session store: %w", err)
 	}
 
-	hooks := webhook.NewDispatcher(cfg.WebhookTimeout, log)
+	hooks := webhook.NewDispatcher(cfg.WebhookTimeout, log, webhook.AddressPolicy{AllowPrivate: cfg.WebhookAllowPrivate})
+	if cfg.WebhookAllowPrivate {
+		log.Warn("WEBHOOK_ALLOW_PRIVATE is on: webhooks may reach loopback and private networks")
+	}
 	manager := instance.NewManager(st, container, hooks, log, wlog, cfg.SendMinInterval)
 	if err := manager.Restore(ctx); err != nil {
 		return fmt.Errorf("restore instances: %w", err)
@@ -78,7 +81,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler:           httpapi.New(cfg.AdminKey, manager, st, log).Handler(),
+		Handler:           httpapi.New(cfg.AdminKey, manager, st, hooks.Policy(), log).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      90 * time.Second,

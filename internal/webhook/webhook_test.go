@@ -41,7 +41,8 @@ func TestDispatcherRetriesUntilSuccess(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	d := NewDispatcher(2*time.Second, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	// The test server listens on 127.0.0.1, so private addresses must be allowed here.
+	d := NewDispatcher(2*time.Second, slog.New(slog.NewTextHandler(io.Discard, nil)), AddressPolicy{AllowPrivate: true})
 	d.retryDelays = []time.Duration{10 * time.Millisecond, 10 * time.Millisecond, 10 * time.Millisecond}
 	d.Send(Target{URL: srv.URL, Secret: "s3cr3t"}, Event{Event: "message.received", Instance: "test"})
 

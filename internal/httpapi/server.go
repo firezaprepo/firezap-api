@@ -10,8 +10,8 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -21,6 +21,7 @@ import (
 	"github.com/firezaprepo/firezap-api/internal/auth"
 	"github.com/firezaprepo/firezap-api/internal/instance"
 	"github.com/firezaprepo/firezap-api/internal/store"
+	"github.com/firezaprepo/firezap-api/internal/webhook"
 )
 
 // Version is the API version reported by the root endpoint.
@@ -37,12 +38,13 @@ type Server struct {
 	adminKey string
 	manager  *instance.Manager
 	store    *store.Store
+	policy   webhook.AddressPolicy
 	log      *slog.Logger
 }
 
 // New creates the server.
-func New(adminKey string, manager *instance.Manager, st *store.Store, log *slog.Logger) *Server {
-	return &Server{adminKey: adminKey, manager: manager, store: st, log: log}
+func New(adminKey string, manager *instance.Manager, st *store.Store, policy webhook.AddressPolicy, log *slog.Logger) *Server {
+	return &Server{adminKey: adminKey, manager: manager, store: st, policy: policy, log: log}
 }
 
 // Handler returns the router with every route.
@@ -231,18 +233,26 @@ func (s *Server) setWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	body.URL = strings.TrimSpace(body.URL)
 	if body.URL != "" {
-		u, err := url.Parse(body.URL)
-		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-			writeError(w, http.StatusBadRequest, "url must be an http or https address")
+		if err := webhook.ValidateURL(r.Context(), body.URL, s.policy, net.DefaultResolver.LookupNetIP); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}
-	secret, err := s.manager.SetWebhook(r.Context(), r.PathValue("id"), body.URL, strings.TrimSpace(body.Secret))
+	given := strings.TrimSpace(body.Secret)
+	secret, err := s.manager.SetWebhook(r.Context(), r.PathValue("id"), body.URL, given)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"url": body.URL, "secret": secret})
+	// The secret is returned only when the server generated it (shown once, like an API key).
+	// A secret sent by the caller is never echoed back: responses end up in proxy, terminal
+	// and integration logs.
+	resp := map[string]any{"url": body.URL, "secretSet": secret != ""}
+	if given == "" && secret != "" {
+		resp["secret"] = secret
+		resp["note"] = "Save the secret now: it is shown only once."
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) sendText(w http.ResponseWriter, r *http.Request) {

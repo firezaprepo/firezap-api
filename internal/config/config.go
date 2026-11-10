@@ -20,6 +20,9 @@ type Config struct {
 	WebhookTimeout  time.Duration
 	DefaultLanguage string
 	LogLevel        string
+	// WebhookAllowPrivate lets webhooks reach loopback and private networks. Off by default:
+	// with it on, whoever can set a webhook can make the server call into its own network.
+	WebhookAllowPrivate bool
 	// SendMinInterval is the minimum time between two messages sent by the same instance.
 	// It keeps the sending pace close to normal human use, which protects the number.
 	SendMinInterval time.Duration
@@ -76,6 +79,14 @@ func load(getenv func(string) string) (Config, error) {
 		errs = append(errs, errors.New("SEND_MIN_INTERVAL_MS must be between 0 and 60000"))
 	}
 	cfg.SendMinInterval = time.Duration(interval) * time.Millisecond
+
+	switch strings.ToLower(get("WEBHOOK_ALLOW_PRIVATE", "false")) {
+	case "true", "1", "yes":
+		cfg.WebhookAllowPrivate = true
+	case "false", "0", "no":
+	default:
+		errs = append(errs, errors.New("WEBHOOK_ALLOW_PRIVATE must be true or false"))
+	}
 
 	switch cfg.DefaultLanguage {
 	case "en", "pt-BR":

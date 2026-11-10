@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 )
@@ -51,19 +52,36 @@ func Verify(secret string, body []byte, signature string) bool {
 // Dispatcher sends events asynchronously, so a slow webhook never blocks message handling.
 type Dispatcher struct {
 	client *http.Client
+	policy AddressPolicy
 	log    *slog.Logger
 	// retryDelays are the waits before each new attempt after the first one fails.
 	retryDelays []time.Duration
 }
 
-// NewDispatcher creates a dispatcher with the given request timeout.
-func NewDispatcher(timeout time.Duration, log *slog.Logger) *Dispatcher {
+// NewDispatcher creates a dispatcher with the given request timeout. Every connection is
+// checked against the address policy (see guard.go), and environment proxies are ignored so
+// they cannot be used to reach addresses the policy blocks.
+func NewDispatcher(timeout time.Duration, log *slog.Logger, policy AddressPolicy) *Dispatcher {
+	dialer := &net.Dialer{Timeout: timeout, Control: dialControl(policy)}
+	transport := &http.Transport{
+		Proxy:                 nil,
+		DialContext:           dialer.DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: time.Second,
+	}
 	return &Dispatcher{
-		client:      &http.Client{Timeout: timeout},
+		client:      &http.Client{Timeout: timeout, Transport: transport},
+		policy:      policy,
 		log:         log,
 		retryDelays: []time.Duration{2 * time.Second, 10 * time.Second, 30 * time.Second},
 	}
 }
+
+// Policy returns the address policy, so the HTTP layer validates URLs with the same rule.
+func (d *Dispatcher) Policy() AddressPolicy { return d.policy }
 
 // Send delivers the event in the background. It returns immediately.
 func (d *Dispatcher) Send(target Target, evt Event) {

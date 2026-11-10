@@ -422,7 +422,7 @@ func (m *Manager) Shutdown() {
 
 func (m *Manager) newClient(rt *runtime, device *wastore.Device) *whatsmeow.Client {
 	cli := whatsmeow.NewClient(device, m.waLog.Sub(rt.rec.ID))
-	cli.AddEventHandler(func(evt any) { m.handle(rt, evt) })
+	cli.AddEventHandler(func(evt any) { m.handle(rt, cli, evt) })
 	return cli
 }
 
@@ -444,7 +444,15 @@ func (m *Manager) setStatus(rt *runtime, s Status) {
 	}
 }
 
-func (m *Manager) handle(rt *runtime, evt any) {
+// lidsOf returns the LID ↔ phone map of a client, or nil.
+func lidsOf(cli *whatsmeow.Client) lidLookup {
+	if cli == nil || cli.Store == nil || cli.Store.LIDs == nil {
+		return nil
+	}
+	return cli.Store.LIDs
+}
+
+func (m *Manager) handle(rt *runtime, cli *whatsmeow.Client, evt any) {
 	switch e := evt.(type) {
 	case *events.PairSuccess:
 		if err := m.store.SetDevice(context.Background(), rt.rec.ID, e.ID.String()); err != nil {
@@ -467,18 +475,36 @@ func (m *Manager) handle(rt *runtime, evt any) {
 		_ = m.store.SetDevice(context.Background(), rt.rec.ID, "")
 		m.setStatus(rt, StatusLoggedOut)
 	case *events.Message:
-		kind, text := MessageContent(e.Message)
-		m.emit(rt, "message.received", map[string]any{
+		d := Describe(e.Message)
+		if !d.Deliver {
+			return // encryption or protocol plumbing: nothing a person sees (see Describe)
+		}
+		ctx, lids := context.Background(), lidsOf(cli)
+		data := map[string]any{
 			"id":        e.Info.ID,
 			"chat":      e.Info.Chat.String(),
 			"sender":    e.Info.Sender.String(),
+			"senderPn":  phoneJID(ctx, lids, e.Info.Sender, e.Info.SenderAlt),
 			"fromMe":    e.Info.IsFromMe,
 			"isGroup":   e.Info.IsGroup,
 			"pushName":  e.Info.PushName,
 			"timestamp": e.Info.Timestamp.UTC(),
-			"type":      kind,
-			"text":      text,
-		})
+			"type":      d.Kind,
+			"text":      d.Text,
+		}
+		if !e.Info.IsGroup {
+			// In a private chat the chat is the other person: the sender when they wrote to us,
+			// the recipient when the message was sent from this number.
+			alt := e.Info.SenderAlt
+			if e.Info.IsFromMe {
+				alt = e.Info.RecipientAlt
+			}
+			data["chatPn"] = phoneJID(ctx, lids, e.Info.Chat, alt)
+		}
+		if d.Target != "" {
+			data["target"] = d.Target
+		}
+		m.emit(rt, "message.received", data)
 	case *events.Receipt:
 		var status string
 		switch e.Type {
@@ -489,11 +515,15 @@ func (m *Manager) handle(rt *runtime, evt any) {
 		default:
 			return
 		}
-		m.emit(rt, "message.status", map[string]any{
+		data := map[string]any{
 			"ids":       e.MessageIDs,
 			"chat":      e.Chat.String(),
 			"status":    status,
 			"timestamp": e.Timestamp.UTC(),
-		})
+		}
+		if !e.IsGroup {
+			data["chatPn"] = phoneJID(context.Background(), lidsOf(cli), e.Chat, types.JID{})
+		}
+		m.emit(rt, "message.status", data)
 	}
 }

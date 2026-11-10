@@ -141,6 +141,7 @@ Toda a configuração vem de variáveis de ambiente (`.env`). A lista completa v
 | `PUBLIC_URL` | Endereço público do servidor (usado nos links de mídia) | — |
 | `MEDIA_STORAGE` | `local` ou `s3` | `local` |
 | `WEBHOOK_TIMEOUT` | Tempo limite do webhook, em segundos | `10` |
+| `WEBHOOK_ALLOW_PRIVATE` | Permite webhook para loopback e redes privadas (mesma máquina ou rede Docker). Deixe `false` se outras pessoas puderem configurar webhooks; os metadados da nuvem continuam bloqueados | `false` |
 | `DEFAULT_LANGUAGE` | Idioma do painel: `en` ou `pt-BR` | `en` |
 | `LOG_LEVEL` | `debug`, `info`, `warn` ou `error` | `info` |
 
@@ -191,6 +192,10 @@ Cada instância pode enviar os eventos para um endereço da sua escolha:
 | `connection.update` | A instância conectou, desconectou ou precisa de um QR code novo |
 | `group.update` | Mudou o nome, os participantes ou as configurações de um grupo |
 | `call.received` | Chegou uma ligação (registrada; a API não atende ligações) |
+
+`message.received` traz `sender`/`chat` como o WhatsApp manda — muitas vezes um LID (`…@lid`), que não é número de telefone — e também `senderPn` e, em conversa privada, `chatPn` com o JID do telefone quando ele é conhecido. Mensagens apagadas e editadas chegam com `type` `revoke` ou `edit` e o id da mensagem afetada em `target`.
+
+O endereço do webhook precisa ser `http` ou `https` e não pode apontar para loopback, redes privadas ou link-local (ver `WEBHOOK_ALLOW_PRIVATE`). O segredo que você envia nunca é devolvido; se você deixar em branco, um é gerado e mostrado uma única vez.
 
 Toda chamada leva o cabeçalho `X-FireZAP-Signature` (HMAC-SHA256 do corpo com o segredo do seu
 webhook), para você confirmar que ela veio do seu servidor. Entregas que falham são reenviadas

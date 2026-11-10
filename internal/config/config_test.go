@@ -55,3 +55,19 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		}
 	}
 }
+
+func TestWebhookAllowPrivate(t *testing.T) {
+	base := map[string]string{"FZ_ADMIN_KEY": strings.Repeat("k", 32), "DATABASE_URL": "postgres://x"}
+	cfg, err := load(env(base))
+	if err != nil || cfg.WebhookAllowPrivate {
+		t.Fatalf("must be off by default: %v %+v", err, cfg.WebhookAllowPrivate)
+	}
+	base["WEBHOOK_ALLOW_PRIVATE"] = "true"
+	if cfg, err = load(env(base)); err != nil || !cfg.WebhookAllowPrivate {
+		t.Fatalf("true: %v %v", err, cfg.WebhookAllowPrivate)
+	}
+	base["WEBHOOK_ALLOW_PRIVATE"] = "maybe"
+	if _, err = load(env(base)); err == nil || !strings.Contains(err.Error(), "WEBHOOK_ALLOW_PRIVATE") {
+		t.Fatalf("invalid value accepted: %v", err)
+	}
+}
