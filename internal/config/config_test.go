@@ -71,3 +71,21 @@ func TestWebhookAllowPrivate(t *testing.T) {
 		t.Fatalf("invalid value accepted: %v", err)
 	}
 }
+
+func TestMediaMaxMB(t *testing.T) {
+	base := map[string]string{"FZ_ADMIN_KEY": strings.Repeat("k", 32), "DATABASE_URL": "postgres://x"}
+	cfg, err := load(env(base))
+	if err != nil || cfg.MediaMaxBytes != 16<<20 {
+		t.Fatalf("default must be 16 MB: %v %d", err, cfg.MediaMaxBytes)
+	}
+	base["MEDIA_MAX_MB"] = "64"
+	if cfg, err = load(env(base)); err != nil || cfg.MediaMaxBytes != 64<<20 {
+		t.Fatalf("64: %v %d", err, cfg.MediaMaxBytes)
+	}
+	for _, v := range []string{"0", "101", "lots"} {
+		base["MEDIA_MAX_MB"] = v
+		if _, err = load(env(base)); err == nil || !strings.Contains(err.Error(), "MEDIA_MAX_MB") {
+			t.Errorf("%q accepted: %v", v, err)
+		}
+	}
+}

@@ -28,6 +28,7 @@
 - [Configuração](#configuração)
 - [Visão geral da API](#visão-geral-da-api)
 - [Webhooks](#webhooks)
+- [Mídia](#mídia)
 - [Painel](#painel)
 - [Uso responsável](#uso-responsável)
 - [Roadmap](#roadmap)
@@ -138,8 +139,8 @@ Toda a configuração vem de variáveis de ambiente (`.env`). A lista completa v
 | `FZ_ADMIN_KEY` | Chave de administrador do painel e das rotas de admin. **Obrigatória.** | — |
 | `DATABASE_URL` | Conexão com o PostgreSQL. **Obrigatória.** | — |
 | `HTTP_PORT` | Porta da API e do painel | `8080` |
-| `PUBLIC_URL` | Endereço público do servidor (usado nos links de mídia) | — |
-| `MEDIA_STORAGE` | `local` ou `s3` | `local` |
+| `PUBLIC_URL` | Endereço público do servidor | — |
+| `MEDIA_MAX_MB` | Maior arquivo enviado ou baixado, em MB (1 a 100). O arquivo fica na memória durante o envio | `16` |
 | `WEBHOOK_TIMEOUT` | Tempo limite do webhook, em segundos | `10` |
 | `WEBHOOK_ALLOW_PRIVATE` | Permite webhook para loopback e redes privadas (mesma máquina ou rede Docker). Deixe `false` se outras pessoas puderem configurar webhooks; os metadados da nuvem continuam bloqueados | `false` |
 | `DEFAULT_LANGUAGE` | Idioma do painel: `en` ou `pt-BR` | `en` |
@@ -166,6 +167,7 @@ um arquivo OpenAPI.
 | `DELETE` | `/instances/{id}` | Apagar a instância |
 | `POST` | `/instances/{id}/messages/text` | Enviar mensagem de texto |
 | `POST` | `/instances/{id}/messages/media` | Enviar imagem, vídeo, documento ou áudio |
+| `POST` | `/instances/{id}/media/download` | Baixar um arquivo recebido |
 | `POST` | `/instances/{id}/messages/reaction` | Reagir a uma mensagem |
 | `GET` | `/instances/{id}/groups` | Listar grupos |
 | `POST` | `/instances/{id}/groups` | Criar um grupo |
@@ -200,6 +202,33 @@ O endereço do webhook precisa ser `http` ou `https` e não pode apontar para lo
 Toda chamada leva o cabeçalho `X-FireZAP-Signature` (HMAC-SHA256 do corpo com o segredo do seu
 webhook), para você confirmar que ela veio do seu servidor. Entregas que falham são reenviadas
 com intervalos crescentes.
+
+## Mídia
+
+O `message.received` de imagem, vídeo, áudio, documento e figurinha traz um objeto `media`
+(mimetype, tamanho, fileName, segundos, `ptt` para mensagem de voz e as chaves para baixar o
+arquivo). A API não guarda cópia de mensagens nem de arquivos: para obter o arquivo, devolva esse
+objeto sem alterar:
+
+```bash
+curl -X POST https://api.exemplo.com.br/instances/meu-numero/media/download   -H "Authorization: Bearer CHAVE_DA_INSTANCIA" -H "Content-Type: application/json"   -d '<o objeto "media" do webhook>' -o arquivo
+```
+
+A resposta é o arquivo já decifrado, com o `Content-Type` dele. O WhatsApp guarda a mídia por
+tempo limitado: arquivo antigo responde `410 Gone`, então baixe o que precisar quando chegar.
+
+Para enviar, use `POST /instances/{id}/messages/media` com `to`, `type` (`image`, `video`,
+`audio` ou `document`) e o arquivo em `url` **ou** `base64` (aceita `data:` URL), além de
+`caption`, `fileName`, `mimetype` e `ptt`, opcionais:
+
+```bash
+curl -X POST https://api.exemplo.com.br/instances/meu-numero/messages/media   -H "Authorization: Bearer CHAVE_DA_INSTANCIA" -H "Content-Type: application/json"   -d '{"to": "5511999999999", "type": "document", "url": "https://exemplo.com.br/boleto.pdf", "caption": "Seu boleto"}'
+```
+
+Imagem precisa ser JPEG ou PNG e vídeo MP4; mensagem de voz (`"ptt": true`) precisa ser
+OGG/Opus — outros formatos são recusados em vez de chegarem quebrados no celular; mande-os como
+documento. URLs de mídia seguem as mesmas regras de endereço do webhook. O tamanho é limitado por
+`MEDIA_MAX_MB`.
 
 ## Painel
 

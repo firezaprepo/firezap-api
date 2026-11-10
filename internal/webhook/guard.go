@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"net/netip"
 	"net/url"
 	"strings"
@@ -83,6 +84,23 @@ func ValidateURL(ctx context.Context, raw string, p AddressPolicy, resolve Resol
 		}
 	}
 	return nil
+}
+
+// SafeClient returns an HTTP client for addresses chosen by API users (webhooks, media URLs).
+// Every connection, redirects included, is checked against the policy at dial time, and
+// environment proxies are ignored so they cannot be used to reach blocked addresses.
+func SafeClient(timeout time.Duration, p AddressPolicy) *http.Client {
+	dialer := &net.Dialer{Timeout: timeout, Control: dialControl(p)}
+	transport := &http.Transport{
+		Proxy:                 nil,
+		DialContext:           dialer.DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: time.Second,
+	}
+	return &http.Client{Timeout: timeout, Transport: transport}
 }
 
 // dialControl runs right before each connection is opened, with the IP actually chosen. It is

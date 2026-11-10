@@ -26,6 +26,9 @@ type Config struct {
 	// SendMinInterval is the minimum time between two messages sent by the same instance.
 	// It keeps the sending pace close to normal human use, which protects the number.
 	SendMinInterval time.Duration
+	// MediaMaxBytes is the largest attachment the API sends or downloads. Files are held in
+	// memory while sent, so this also bounds memory per request.
+	MediaMaxBytes int64
 }
 
 // minAdminKeyLength guards against weak admin keys: the admin key controls every instance.
@@ -79,6 +82,12 @@ func load(getenv func(string) string) (Config, error) {
 		errs = append(errs, errors.New("SEND_MIN_INTERVAL_MS must be between 0 and 60000"))
 	}
 	cfg.SendMinInterval = time.Duration(interval) * time.Millisecond
+
+	mediaMB, err := strconv.Atoi(get("MEDIA_MAX_MB", "16"))
+	if err != nil || mediaMB < 1 || mediaMB > 100 {
+		errs = append(errs, errors.New("MEDIA_MAX_MB must be between 1 and 100"))
+	}
+	cfg.MediaMaxBytes = int64(mediaMB) << 20
 
 	switch strings.ToLower(get("WEBHOOK_ALLOW_PRIVATE", "false")) {
 	case "true", "1", "yes":

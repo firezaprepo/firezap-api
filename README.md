@@ -28,6 +28,7 @@
 - [Configuration](#configuration)
 - [API overview](#api-overview)
 - [Webhooks](#webhooks)
+- [Media](#media)
 - [Dashboard](#dashboard)
 - [Responsible use](#responsible-use)
 - [Roadmap](#roadmap)
@@ -138,8 +139,8 @@ All settings come from environment variables (`.env`). The full list will live i
 | `FZ_ADMIN_KEY` | Admin key for the dashboard and admin endpoints. **Required.** | — |
 | `DATABASE_URL` | PostgreSQL connection string. **Required.** | — |
 | `HTTP_PORT` | Port for the API and the dashboard | `8080` |
-| `PUBLIC_URL` | Public address of your server (used in media links) | — |
-| `MEDIA_STORAGE` | `local` or `s3` | `local` |
+| `PUBLIC_URL` | Public address of your server | — |
+| `MEDIA_MAX_MB` | Largest file sent or downloaded, in MB (1 to 100). Files are held in memory while sent | `16` |
 | `WEBHOOK_TIMEOUT` | Webhook request timeout, in seconds | `10` |
 | `WEBHOOK_ALLOW_PRIVATE` | Allow webhooks to loopback and private networks (same host or Docker network). Keep `false` if other people can set webhooks; cloud metadata stays blocked | `false` |
 | `DEFAULT_LANGUAGE` | Dashboard language: `en` or `pt-BR` | `en` |
@@ -165,6 +166,7 @@ instance key for instance routes. The complete reference will be published as an
 | `DELETE` | `/instances/{id}` | Delete the instance |
 | `POST` | `/instances/{id}/messages/text` | Send a text message |
 | `POST` | `/instances/{id}/messages/media` | Send image, video, document or audio |
+| `POST` | `/instances/{id}/media/download` | Download a received file |
 | `POST` | `/instances/{id}/messages/reaction` | React to a message |
 | `GET` | `/instances/{id}/groups` | List groups |
 | `POST` | `/instances/{id}/groups` | Create a group |
@@ -199,6 +201,31 @@ The webhook URL must be an `http` or `https` address that does not point to loop
 Every request carries an `X-FireZAP-Signature` header (HMAC-SHA256 of the body with your
 webhook secret), so you can confirm it came from your server. Failed deliveries are retried
 with exponential backoff.
+
+## Media
+
+`message.received` for images, videos, audio, documents and stickers carries a `media` object
+(mimetype, size, fileName, seconds, `ptt` for voice notes, and the keys to download the file).
+The API keeps no copy of messages or files: to get the file, send that object back unchanged:
+
+```bash
+curl -X POST https://api.example.com/instances/my-number/media/download   -H "Authorization: Bearer INSTANCE_KEY" -H "Content-Type: application/json"   -d '<the "media" object from the webhook>' -o file
+```
+
+The response is the decrypted file with its `Content-Type`. WhatsApp keeps media for a limited
+time: an old file answers `410 Gone`, so download what you need when it arrives.
+
+To send, use `POST /instances/{id}/messages/media` with `to`, `type` (`image`, `video`,
+`audio` or `document`) and the file in `url` **or** `base64` (a `data:` URL is accepted),
+plus optional `caption`, `fileName`, `mimetype` and `ptt`:
+
+```bash
+curl -X POST https://api.example.com/instances/my-number/messages/media   -H "Authorization: Bearer INSTANCE_KEY" -H "Content-Type: application/json"   -d '{"to": "5511999999999", "type": "document", "url": "https://example.com/invoice.pdf", "caption": "Your invoice"}'
+```
+
+Images must be JPEG or PNG and videos MP4; voice notes (`"ptt": true`) must be OGG/Opus —
+other formats are refused instead of arriving broken on the phone, so send them as a document.
+Media URLs follow the same address rules as webhooks. Files are limited by `MEDIA_MAX_MB`.
 
 ## Dashboard
 

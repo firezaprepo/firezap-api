@@ -99,7 +99,7 @@ func TestPhoneJID(t *testing.T) {
 
 func TestChatType(t *testing.T) {
 	cases := map[string]string{
-		"5511987654321@s.whatsapp.net":   "private",
+		"5511987654321@s.whatsapp.net":  "private",
 		"164012345678994@lid":           "private",
 		"120363000000000029@g.us":       "group",
 		"status@broadcast":              "status",

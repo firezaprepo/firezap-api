@@ -14,6 +14,7 @@ type Description struct {
 	Text    string
 	Target  string // for "revoke" and "edit": the id of the message it changes
 	Deliver bool   // false for protocol-only messages, which carry nothing a person sees
+	Media   *Media // the attachment of image, video, audio, document and sticker messages
 }
 
 // Describe classifies a received message.
@@ -42,7 +43,7 @@ func Describe(m *waE2E.Message) Description {
 	if kind == "other" && isPlumbingOnly(m) {
 		return Description{Kind: "other"}
 	}
-	return Description{Kind: kind, Text: text, Deliver: true}
+	return Description{Kind: kind, Text: text, Deliver: true, Media: MediaOf(m)}
 }
 
 // isPlumbingOnly reports whether a message has nothing but encryption or context metadata:

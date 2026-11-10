@@ -39,12 +39,15 @@ type Server struct {
 	manager  *instance.Manager
 	store    *store.Store
 	policy   webhook.AddressPolicy
+	fetcher  *http.Client // downloads media URLs under the same address policy as webhooks
+	mediaMax int64
 	log      *slog.Logger
 }
 
-// New creates the server.
-func New(adminKey string, manager *instance.Manager, st *store.Store, policy webhook.AddressPolicy, log *slog.Logger) *Server {
-	return &Server{adminKey: adminKey, manager: manager, store: st, policy: policy, log: log}
+// New creates the server. mediaMax is the largest attachment, in bytes, sent or downloaded.
+func New(adminKey string, manager *instance.Manager, st *store.Store, policy webhook.AddressPolicy, mediaMax int64, log *slog.Logger) *Server {
+	return &Server{adminKey: adminKey, manager: manager, store: st, policy: policy,
+		fetcher: webhook.SafeClient(time.Minute, policy), mediaMax: mediaMax, log: log}
 }
 
 // Handler returns the router with every route.
@@ -66,6 +69,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /instances/{id}/logout", s.inst(s.logout))
 	mux.HandleFunc("PUT /instances/{id}/webhook", s.inst(s.setWebhook))
 	mux.HandleFunc("POST /instances/{id}/messages/text", s.inst(s.sendText))
+	mux.HandleFunc("POST /instances/{id}/messages/media", s.inst(s.sendMedia))
+	mux.HandleFunc("POST /instances/{id}/media/download", s.inst(s.downloadMedia))
 
 	return s.logRequests(mux)
 }
@@ -291,8 +296,12 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, instance.ErrNotConnected), errors.Is(err, instance.ErrAlreadyLinked):
 		writeError(w, http.StatusConflict, err.Error())
-	case errors.Is(err, instance.ErrInvalidRecipient):
+	case errors.Is(err, instance.ErrInvalidRecipient), errors.Is(err, instance.ErrInvalidMedia):
 		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, instance.ErrMediaTooLarge):
+		writeError(w, http.StatusRequestEntityTooLarge, err.Error())
+	case errors.Is(err, instance.ErrMediaGone):
+		writeError(w, http.StatusGone, err.Error())
 	case errors.Is(err, context.DeadlineExceeded):
 		writeError(w, http.StatusGatewayTimeout, "the operation timed out")
 	default:
@@ -302,9 +311,18 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 }
 
 func decode(w http.ResponseWriter, r *http.Request, dst any) bool {
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
+	return decodeLimit(w, r, dst, maxBody)
+}
+
+func decodeLimit(w http.ResponseWriter, r *http.Request, dst any, limit int64) bool {
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body is too large")
+			return false
+		}
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return false
 	}

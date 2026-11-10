@@ -81,11 +81,13 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler:           httpapi.New(cfg.AdminKey, manager, st, hooks.Policy(), log).Handler(),
+		Handler:           httpapi.New(cfg.AdminKey, manager, st, hooks.Policy(), cfg.MediaMaxBytes, log).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      90 * time.Second,
-		IdleTimeout:       120 * time.Second,
+		// Media uploads and downloads move up to MEDIA_MAX_MB, so the body timeouts are longer
+		// than a JSON API would need.
+		ReadTimeout:  2 * time.Minute,
+		WriteTimeout: 3 * time.Minute,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	errCh := make(chan error, 1)

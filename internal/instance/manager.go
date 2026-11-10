@@ -379,17 +379,31 @@ func (m *Manager) SendText(ctx context.Context, id, to, text string) (string, er
 	if err != nil {
 		return "", err
 	}
-	rt, err := m.get(id)
+	rt, cli, err := m.connected(id)
 	if err != nil {
 		return "", err
+	}
+	return m.paced(ctx, rt, cli, jid, &waE2E.Message{Conversation: proto.String(text)})
+}
+
+// connected returns an instance whose number is linked and online.
+func (m *Manager) connected(id string) (*runtime, *whatsmeow.Client, error) {
+	rt, err := m.get(id)
+	if err != nil {
+		return nil, nil, err
 	}
 	rt.mu.Lock()
 	cli := rt.client
 	rt.mu.Unlock()
 	if cli == nil || !cli.IsConnected() || !cli.IsLoggedIn() {
-		return "", ErrNotConnected
+		return nil, nil, ErrNotConnected
 	}
+	return rt, cli, nil
+}
 
+// paced sends a message respecting the minimum interval between two messages of the same
+// instance (SEND_MIN_INTERVAL_MS), so every kind of message shares one pace.
+func (m *Manager) paced(ctx context.Context, rt *runtime, cli *whatsmeow.Client, jid types.JID, msg *waE2E.Message) (string, error) {
 	rt.sendMu.Lock()
 	defer rt.sendMu.Unlock()
 	if wait := m.minInterval - time.Since(rt.lastSend); wait > 0 {
@@ -399,7 +413,7 @@ func (m *Manager) SendText(ctx context.Context, id, to, text string) (string, er
 		case <-time.After(wait):
 		}
 	}
-	resp, err := cli.SendMessage(ctx, jid, &waE2E.Message{Conversation: proto.String(text)})
+	resp, err := cli.SendMessage(ctx, jid, msg)
 	rt.lastSend = time.Now()
 	if err != nil {
 		return "", fmt.Errorf("send failed: %w", err)
@@ -492,6 +506,9 @@ func (m *Manager) handle(rt *runtime, cli *whatsmeow.Client, evt any) {
 			"timestamp": e.Info.Timestamp.UTC(),
 			"type":      d.Kind,
 			"text":      d.Text,
+		}
+		if d.Media != nil {
+			data["media"] = d.Media // download with POST /instances/{id}/media/download
 		}
 		if ChatType(e.Info.Chat) == "private" {
 			// In a private chat the chat is the other person: the sender when they wrote to us,

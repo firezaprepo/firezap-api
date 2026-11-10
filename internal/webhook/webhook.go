@@ -14,7 +14,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"time"
 )
@@ -62,18 +61,8 @@ type Dispatcher struct {
 // checked against the address policy (see guard.go), and environment proxies are ignored so
 // they cannot be used to reach addresses the policy blocks.
 func NewDispatcher(timeout time.Duration, log *slog.Logger, policy AddressPolicy) *Dispatcher {
-	dialer := &net.Dialer{Timeout: timeout, Control: dialControl(policy)}
-	transport := &http.Transport{
-		Proxy:                 nil,
-		DialContext:           dialer.DialContext,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
-		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: time.Second,
-	}
 	return &Dispatcher{
-		client:      &http.Client{Timeout: timeout, Transport: transport},
+		client:      SafeClient(timeout, policy),
 		policy:      policy,
 		log:         log,
 		retryDelays: []time.Duration{2 * time.Second, 10 * time.Second, 30 * time.Second},
