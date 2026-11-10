@@ -39,3 +39,7 @@ coverage.*
 *.swp
 .DS_Store
 Thumbs.db
+
+# Claude Code stores "don't ask again" permissions here in plain text (they may contain
+# passwords or keys). A global gitignore protects one machine; this one protects every clone.
+.claude/settings.local.json
