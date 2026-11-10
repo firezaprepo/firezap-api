@@ -192,7 +192,7 @@ Each instance can send events to a URL of your choice:
 | `group.update` | Group name, participants or settings changed |
 | `call.received` | Incoming call (logged; calls are not answered by the API) |
 
-`message.received` carries `sender`/`chat` as WhatsApp sends them — often a LID (`…@lid`), which is not a phone number — plus `senderPn` and, in private chats, `chatPn` with the phone-number JID when it is known. Deleted and edited messages arrive with `type` `revoke` or `edit` and the affected message id in `target`.
+`message.received` carries `sender`/`chat` as WhatsApp sends them — often a LID (`…@lid`), which is not a phone number — plus `senderPn` and, in private chats, `chatPn` with the phone-number JID when it is known. `chatType` says what kind of chat it is: `private`, `group`, `status` (WhatsApp Status), `broadcast` or `newsletter` (a Channel) — filter out the ones you do not handle. Deleted and edited messages arrive with `type` `revoke` or `edit` and the affected message id in `target`.
 
 The webhook URL must be an `http` or `https` address that does not point to loopback, private or link-local networks (see `WEBHOOK_ALLOW_PRIVATE`). The secret you send is never echoed back; if you leave it empty, one is generated and shown once.
 

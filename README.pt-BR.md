@@ -193,7 +193,7 @@ Cada instância pode enviar os eventos para um endereço da sua escolha:
 | `group.update` | Mudou o nome, os participantes ou as configurações de um grupo |
 | `call.received` | Chegou uma ligação (registrada; a API não atende ligações) |
 
-`message.received` traz `sender`/`chat` como o WhatsApp manda — muitas vezes um LID (`…@lid`), que não é número de telefone — e também `senderPn` e, em conversa privada, `chatPn` com o JID do telefone quando ele é conhecido. Mensagens apagadas e editadas chegam com `type` `revoke` ou `edit` e o id da mensagem afetada em `target`.
+`message.received` traz `sender`/`chat` como o WhatsApp manda — muitas vezes um LID (`…@lid`), que não é número de telefone — e também `senderPn` e, em conversa privada, `chatPn` com o JID do telefone quando ele é conhecido. `chatType` diz o tipo de conversa: `private`, `group`, `status` (Status do WhatsApp), `broadcast` ou `newsletter` (Canal) — filtre os que você não trata. Mensagens apagadas e editadas chegam com `type` `revoke` ou `edit` e o id da mensagem afetada em `target`.
 
 O endereço do webhook precisa ser `http` ou `https` e não pode apontar para loopback, redes privadas ou link-local (ver `WEBHOOK_ALLOW_PRIVATE`). O segredo que você envia nunca é devolvido; se você deixar em branco, um é gerado e mostrado uma única vez.
 

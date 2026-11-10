@@ -96,3 +96,23 @@ func TestPhoneJID(t *testing.T) {
 		t.Errorf("device: %q", got)
 	}
 }
+
+func TestChatType(t *testing.T) {
+	cases := map[string]string{
+		"5511987654321@s.whatsapp.net":   "private",
+		"164012345678994@lid":           "private",
+		"120363000000000029@g.us":       "group",
+		"status@broadcast":              "status",
+		"1234567890@broadcast":          "broadcast",
+		"120363000000000002@newsletter": "newsletter",
+	}
+	for raw, want := range cases {
+		jid, err := types.ParseJID(raw)
+		if err != nil {
+			t.Fatalf("%s: %v", raw, err)
+		}
+		if got := ChatType(jid); got != want {
+			t.Errorf("%s: got %q, want %q", raw, got, want)
+		}
+	}
+}

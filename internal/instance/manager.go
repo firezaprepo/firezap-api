@@ -487,12 +487,13 @@ func (m *Manager) handle(rt *runtime, cli *whatsmeow.Client, evt any) {
 			"senderPn":  phoneJID(ctx, lids, e.Info.Sender, e.Info.SenderAlt),
 			"fromMe":    e.Info.IsFromMe,
 			"isGroup":   e.Info.IsGroup,
+			"chatType":  ChatType(e.Info.Chat),
 			"pushName":  e.Info.PushName,
 			"timestamp": e.Info.Timestamp.UTC(),
 			"type":      d.Kind,
 			"text":      d.Text,
 		}
-		if !e.Info.IsGroup {
+		if ChatType(e.Info.Chat) == "private" {
 			// In a private chat the chat is the other person: the sender when they wrote to us,
 			// the recipient when the message was sent from this number.
 			alt := e.Info.SenderAlt

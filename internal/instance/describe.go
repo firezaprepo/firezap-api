@@ -82,3 +82,24 @@ func phoneJID(ctx context.Context, lids lidLookup, jid, alt types.JID) string {
 type lidLookup interface {
 	GetPNForLID(ctx context.Context, lid types.JID) (types.JID, error)
 }
+
+// ChatType tells integrations what kind of chat a message belongs to: "private", "group",
+// "status" (WhatsApp Status, the 24-hour stories), "broadcast" (a broadcast list) or
+// "newsletter" (a Channel). Statuses and channel posts arrive as messages too; without this an
+// integration could open a support conversation for someone's story (2026-11-10 test: a Status
+// arrived flagged as a group and a Channel post as a private chat without a phone number).
+func ChatType(chat types.JID) string {
+	switch chat.Server {
+	case types.GroupServer:
+		return "group"
+	case types.NewsletterServer:
+		return "newsletter"
+	case types.BroadcastServer:
+		if chat.User == types.StatusBroadcastJID.User {
+			return "status"
+		}
+		return "broadcast"
+	default:
+		return "private"
+	}
+}
