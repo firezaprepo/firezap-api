@@ -30,6 +30,7 @@
 - [Webhooks](#webhooks)
 - [Mídia](#mídia)
 - [Reações](#reações)
+- [Responder, editar e apagar](#responder-editar-e-apagar)
 - [Limites de envio](#limites-de-envio)
 - [Painel](#painel)
 - [Uso responsável](#uso-responsável)
@@ -175,6 +176,8 @@ um arquivo OpenAPI.
 | `POST` | `/instances/{id}/messages/media` | Enviar imagem, vídeo, documento ou áudio |
 | `POST` | `/instances/{id}/media/download` | Baixar um arquivo recebido |
 | `POST` | `/instances/{id}/messages/reaction` | Reagir a uma mensagem |
+| `POST` | `/instances/{id}/messages/edit` | Editar o texto de uma mensagem enviada |
+| `POST` | `/instances/{id}/messages/delete` | Apagar uma mensagem para todos |
 | `GET` | `/instances/{id}/groups` | Listar grupos |
 | `POST` | `/instances/{id}/groups` | Criar um grupo |
 | `POST` | `/instances/{id}/groups/{jid}/participants` | Adicionar, remover, promover ou rebaixar participantes |
@@ -201,7 +204,7 @@ Cada instância pode enviar os eventos para um endereço da sua escolha:
 | `group.update` | Mudou o nome, os participantes ou as configurações de um grupo |
 | `call.received` | Chegou uma ligação (registrada; a API não atende ligações) |
 
-`message.received` traz `sender`/`chat` como o WhatsApp manda — muitas vezes um LID (`…@lid`), que não é número de telefone — e também `senderPn` e, em conversa privada, `chatPn` com o JID do telefone quando ele é conhecido. `chatType` diz o tipo de conversa: `private`, `group`, `status` (Status do WhatsApp), `broadcast` ou `newsletter` (Canal) — filtre os que você não trata. Mensagens apagadas e editadas chegam com `type` `revoke` ou `edit` e o id da mensagem afetada em `target`; reações chegam com `type` `reaction`, o emoji em `text` (vazio quando a reação foi retirada) e a mensagem reagida em `target`.
+`message.received` traz `sender`/`chat` como o WhatsApp manda — muitas vezes um LID (`…@lid`), que não é número de telefone — e também `senderPn` e, em conversa privada, `chatPn` com o JID do telefone quando ele é conhecido. `chatType` diz o tipo de conversa: `private`, `group`, `status` (Status do WhatsApp), `broadcast` ou `newsletter` (Canal) — filtre os que você não trata. Mensagens apagadas e editadas chegam com `type` `revoke` ou `edit` e o id da mensagem afetada em `target`; reações chegam com `type` `reaction`, o emoji em `text` (vazio quando a reação foi retirada) e a mensagem reagida em `target`. Uma mensagem que responde a outra traz `replyTo` com o `id` e o `participant` da mensagem respondida.
 
 `message.status` traz os `ids` das mensagens, o `chat` e o `status`. Em grupo cada participante manda a sua própria confirmação, identificada por `participant` e `participantPn`; em conversa privada, `chatPn` traz o telefone quando ele é conhecido.
 
@@ -250,6 +253,31 @@ curl -X POST https://api.exemplo.com.br/instances/meu-numero/messages/reaction \
   -H "Authorization: Bearer CHAVE_DA_INSTANCIA" -H "Content-Type: application/json" \
   -d '{"chat": "5511999999999@s.whatsapp.net", "messageId": "3EB0F1E313827D8CDEB5AE", "emoji": "👍"}'
 ```
+
+## Responder, editar e apagar
+
+**Responder** — acrescente `replyTo` a uma mensagem de texto ou mídia: o `messageId` que está
+sendo respondido, `fromMe` quando ele foi enviado pelo seu número, `participant` para a mensagem
+de outra pessoa em grupo, e `text` para aparecer dentro do balão da citação. A API não guarda
+mensagens, então não consegue preencher o texto citado sozinha — sem `text` o celular mostra a
+resposta com a citação vazia.
+
+```bash
+curl -X POST https://api.exemplo.com.br/instances/meu-numero/messages/text \
+  -H "Authorization: Bearer CHAVE_DA_INSTANCIA" -H "Content-Type: application/json" \
+  -d '{"to": "5511999999999", "text": "Temos sim!", "replyTo": {"messageId": "3EB0F1E313827D8CDEB5AE", "text": "Tem na cor azul?"}}'
+```
+
+**Editar** — `POST /instances/{id}/messages/edit` com `chat`, `messageId` e o novo `text`. Só
+mensagens de texto enviadas pelo seu número; o WhatsApp aceita edição por cerca de 15 minutos
+depois do envio e ignora as posteriores.
+
+**Apagar para todos** — `POST /instances/{id}/messages/delete` com `chat`, `messageId` e
+`fromMe: true` para as suas mensagens. Em grupo em que o seu número é administrador, também dá
+para apagar a mensagem de outra pessoa informando `participant`. O WhatsApp limita a idade da
+mensagem que pode ser apagada.
+
+Respostas, edições e exclusões passam pela mesma fila e pelos mesmos limites das outras mensagens.
 
 ## Limites de envio
 

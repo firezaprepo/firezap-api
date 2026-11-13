@@ -27,14 +27,15 @@ func (e errFetch) Error() string { return e.msg }
 
 func (s *Server) sendMedia(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		To       string `json:"to"`
-		Type     string `json:"type"`
-		URL      string `json:"url"`
-		Base64   string `json:"base64"`
-		Mimetype string `json:"mimetype"`
-		FileName string `json:"fileName"`
-		Caption  string `json:"caption"`
-		PTT      bool   `json:"ptt"`
+		To       string     `json:"to"`
+		Type     string     `json:"type"`
+		URL      string     `json:"url"`
+		Base64   string     `json:"base64"`
+		Mimetype string     `json:"mimetype"`
+		FileName string     `json:"fileName"`
+		Caption  string     `json:"caption"`
+		PTT      bool       `json:"ptt"`
+		ReplyTo  *replyBody `json:"replyTo"`
 	}
 	// base64 makes the file a third bigger; leave room for the other fields too.
 	if !decodeLimit(w, r, &body, s.mediaMax*4/3+64<<10) {
@@ -108,6 +109,7 @@ func (s *Server) sendMedia(w http.ResponseWriter, r *http.Request) {
 	id, err := s.manager.SendMedia(ctx, r.PathValue("id"), body.To, instance.OutgoingMedia{
 		Kind: strings.ToLower(strings.TrimSpace(body.Type)), Data: data, Mimetype: mt,
 		FileName: strings.TrimSpace(body.FileName), Caption: body.Caption, PTT: body.PTT,
+		Quote: body.ReplyTo.quote(),
 	})
 	if err != nil {
 		s.fail(w, err)

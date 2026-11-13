@@ -201,6 +201,7 @@ type OutgoingMedia struct {
 	FileName string // documents
 	Caption  string // image, video and document
 	PTT      bool   // audio: send as a voice note (needs OGG/Opus)
+	Quote    *Quote // optional: send as a reply
 }
 
 // mediaTypes maps an outgoing kind to whatsmeow's upload type.
@@ -297,9 +298,13 @@ func (m *Manager) SendMedia(ctx context.Context, id, to string, out OutgoingMedi
 	if err != nil {
 		return "", err
 	}
+	ci, err := quoteContext(cli, jid, out.Quote) // checked before the upload, which is the slow part
+	if err != nil {
+		return "", err
+	}
 	up, err := cli.Upload(ctx, out.Data, mediaTypes[out.Kind])
 	if err != nil {
 		return "", fmt.Errorf("media upload failed: %w", err)
 	}
-	return m.paced(ctx, rt, cli, jid, buildMediaMessage(out, up))
+	return m.paced(ctx, rt, cli, jid, withContext(buildMediaMessage(out, up), ci))
 }

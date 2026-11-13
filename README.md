@@ -30,6 +30,7 @@
 - [Webhooks](#webhooks)
 - [Media](#media)
 - [Reactions](#reactions)
+- [Replies, edits and deletes](#replies-edits-and-deletes)
 - [Sending limits](#sending-limits)
 - [Dashboard](#dashboard)
 - [Responsible use](#responsible-use)
@@ -174,6 +175,8 @@ instance key for instance routes. The complete reference will be published as an
 | `POST` | `/instances/{id}/messages/media` | Send image, video, document or audio |
 | `POST` | `/instances/{id}/media/download` | Download a received file |
 | `POST` | `/instances/{id}/messages/reaction` | React to a message |
+| `POST` | `/instances/{id}/messages/edit` | Edit the text of a message you sent |
+| `POST` | `/instances/{id}/messages/delete` | Delete a message for everyone |
 | `GET` | `/instances/{id}/groups` | List groups |
 | `POST` | `/instances/{id}/groups` | Create a group |
 | `POST` | `/instances/{id}/groups/{jid}/participants` | Add, remove, promote or demote participants |
@@ -200,7 +203,7 @@ Each instance can send events to a URL of your choice:
 | `group.update` | Group name, participants or settings changed |
 | `call.received` | Incoming call (logged; calls are not answered by the API) |
 
-`message.received` carries `sender`/`chat` as WhatsApp sends them — often a LID (`…@lid`), which is not a phone number — plus `senderPn` and, in private chats, `chatPn` with the phone-number JID when it is known. `chatType` says what kind of chat it is: `private`, `group`, `status` (WhatsApp Status), `broadcast` or `newsletter` (a Channel) — filter out the ones you do not handle. Deleted and edited messages arrive with `type` `revoke` or `edit` and the affected message id in `target`; reactions arrive with `type` `reaction`, the emoji in `text` (empty when the reaction was removed) and the message reacted to in `target`.
+`message.received` carries `sender`/`chat` as WhatsApp sends them — often a LID (`…@lid`), which is not a phone number — plus `senderPn` and, in private chats, `chatPn` with the phone-number JID when it is known. `chatType` says what kind of chat it is: `private`, `group`, `status` (WhatsApp Status), `broadcast` or `newsletter` (a Channel) — filter out the ones you do not handle. Deleted and edited messages arrive with `type` `revoke` or `edit` and the affected message id in `target`; reactions arrive with `type` `reaction`, the emoji in `text` (empty when the reaction was removed) and the message reacted to in `target`. A message that answers an earlier one carries `replyTo` with that message's `id` and `participant`.
 
 `message.status` carries the message `ids`, the `chat` and the `status`. In a group every participant sends their own receipt, identified by `participant` and `participantPn`; in a private chat, `chatPn` has the phone number when it is known.
 
@@ -247,6 +250,29 @@ curl -X POST https://api.example.com/instances/my-number/messages/reaction \
   -H "Authorization: Bearer INSTANCE_KEY" -H "Content-Type: application/json" \
   -d '{"chat": "5511999999999@s.whatsapp.net", "messageId": "3EB0F1E313827D8CDEB5AE", "emoji": "👍"}'
 ```
+
+## Replies, edits and deletes
+
+**Reply** — add `replyTo` to a text or media message: the `messageId` being answered, `fromMe`
+when it was sent by your number, `participant` for someone else's message in a group, and
+`text` to show inside the reply bubble. The API keeps no messages, so it cannot fill the quoted
+text by itself — without `text` the phone shows the reply with an empty quote.
+
+```bash
+curl -X POST https://api.example.com/instances/my-number/messages/text \
+  -H "Authorization: Bearer INSTANCE_KEY" -H "Content-Type: application/json" \
+  -d '{"to": "5511999999999", "text": "Yes, it is in stock!", "replyTo": {"messageId": "3EB0F1E313827D8CDEB5AE", "text": "Do you have it in blue?"}}'
+```
+
+**Edit** — `POST /instances/{id}/messages/edit` with `chat`, `messageId` and the new `text`.
+Only text messages your number sent; WhatsApp accepts edits for about 15 minutes after sending
+and ignores later ones.
+
+**Delete for everyone** — `POST /instances/{id}/messages/delete` with `chat`, `messageId` and
+`fromMe: true` for your own messages. In a group where your number is an admin, you can also
+delete someone else's message by sending `participant`. WhatsApp limits how old a message can be.
+
+Replies, edits and deletes go through the same queue and limits as any other message.
 
 ## Sending limits
 

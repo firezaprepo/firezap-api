@@ -390,9 +390,9 @@ func (m *Manager) SetWebhook(ctx context.Context, id, url, secret string) (strin
 	return secret, nil
 }
 
-// SendText sends a text message and returns the WhatsApp message ID. Messages from the same
-// instance are paced by the configured minimum interval.
-func (m *Manager) SendText(ctx context.Context, id, to, text string) (string, error) {
+// SendText sends a text message, optionally as a reply (quote may be nil), and returns the
+// WhatsApp message ID. It goes through the instance's send queue and limits.
+func (m *Manager) SendText(ctx context.Context, id, to, text string, quote *Quote) (string, error) {
 	jid, err := ParseRecipient(to)
 	if err != nil {
 		return "", err
@@ -401,7 +401,11 @@ func (m *Manager) SendText(ctx context.Context, id, to, text string) (string, er
 	if err != nil {
 		return "", err
 	}
-	return m.paced(ctx, rt, cli, jid, &waE2E.Message{Conversation: proto.String(text)})
+	ci, err := quoteContext(cli, jid, quote)
+	if err != nil {
+		return "", err
+	}
+	return m.paced(ctx, rt, cli, jid, withContext(&waE2E.Message{Conversation: proto.String(text)}, ci))
 }
 
 // connected returns an instance whose number is linked and online.
@@ -577,6 +581,9 @@ func (m *Manager) handle(rt *runtime, cli *whatsmeow.Client, evt any) {
 		}
 		if d.Target != "" {
 			data["target"] = d.Target
+		}
+		if q := quotedOf(e.Message); q != nil {
+			data["replyTo"] = q // this message answers an earlier one
 		}
 		m.emit(rt, "message.received", data)
 	case *events.Receipt:

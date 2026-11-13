@@ -73,6 +73,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /instances/{id}/messages/text", s.inst(s.sendText))
 	mux.HandleFunc("POST /instances/{id}/messages/media", s.inst(s.sendMedia))
 	mux.HandleFunc("POST /instances/{id}/messages/reaction", s.inst(s.sendReaction))
+	mux.HandleFunc("POST /instances/{id}/messages/edit", s.inst(s.editMessage))
+	mux.HandleFunc("POST /instances/{id}/messages/delete", s.inst(s.deleteMessage))
 	mux.HandleFunc("POST /instances/{id}/media/download", s.inst(s.downloadMedia))
 
 	return s.logRequests(mux)
@@ -265,8 +267,9 @@ func (s *Server) setWebhook(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) sendText(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		To   string `json:"to"`
-		Text string `json:"text"`
+		To      string     `json:"to"`
+		Text    string     `json:"text"`
+		ReplyTo *replyBody `json:"replyTo"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -281,7 +284,7 @@ func (s *Server) sendText(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
-	id, err := s.manager.SendText(ctx, r.PathValue("id"), body.To, body.Text)
+	id, err := s.manager.SendText(ctx, r.PathValue("id"), body.To, body.Text, body.ReplyTo.quote())
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -289,23 +292,75 @@ func (s *Server) sendText(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"id": id})
 }
 
+// refBody points to an existing message with the values of its message.received event.
+type refBody struct {
+	Chat        string `json:"chat"`
+	MessageID   string `json:"messageId"`
+	FromMe      bool   `json:"fromMe"`
+	Participant string `json:"participant"`
+}
+
+func (b refBody) ref() instance.MessageRef {
+	return instance.MessageRef{Chat: b.Chat, MessageID: strings.TrimSpace(b.MessageID), FromMe: b.FromMe, Participant: b.Participant}
+}
+
+// replyBody makes a text or media message a reply ("replyTo").
+type replyBody struct {
+	MessageID   string `json:"messageId"`
+	FromMe      bool   `json:"fromMe"`
+	Participant string `json:"participant"`
+	Text        string `json:"text"` // shown inside the reply bubble
+}
+
+func (b *replyBody) quote() *instance.Quote {
+	if b == nil {
+		return nil
+	}
+	return &instance.Quote{MessageID: strings.TrimSpace(b.MessageID), FromMe: b.FromMe, Participant: b.Participant, Text: b.Text}
+}
+
 func (s *Server) sendReaction(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Chat        string `json:"chat"`
-		MessageID   string `json:"messageId"`
-		FromMe      bool   `json:"fromMe"`
-		Participant string `json:"participant"`
-		Emoji       string `json:"emoji"`
+		refBody
+		Emoji string `json:"emoji"`
 	}
 	if !decode(w, r, &body) {
 		return
 	}
+	s.sent(w, r, func(ctx context.Context) (string, error) {
+		return s.manager.SendReaction(ctx, r.PathValue("id"), instance.Reaction{MessageRef: body.ref(), Emoji: body.Emoji})
+	})
+}
+
+func (s *Server) editMessage(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Chat      string `json:"chat"`
+		MessageID string `json:"messageId"`
+		Text      string `json:"text"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	s.sent(w, r, func(ctx context.Context) (string, error) {
+		return s.manager.EditText(ctx, r.PathValue("id"), body.Chat, strings.TrimSpace(body.MessageID), body.Text)
+	})
+}
+
+func (s *Server) deleteMessage(w http.ResponseWriter, r *http.Request) {
+	var body refBody
+	if !decode(w, r, &body) {
+		return
+	}
+	s.sent(w, r, func(ctx context.Context) (string, error) {
+		return s.manager.DeleteMessage(ctx, r.PathValue("id"), body.ref())
+	})
+}
+
+// sent runs a send with the usual time limit and answers with the new message id.
+func (s *Server) sent(w http.ResponseWriter, r *http.Request, send func(context.Context) (string, error)) {
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
-	id, err := s.manager.SendReaction(ctx, r.PathValue("id"), instance.Reaction{
-		Chat: body.Chat, MessageID: strings.TrimSpace(body.MessageID), FromMe: body.FromMe,
-		Participant: body.Participant, Emoji: body.Emoji,
-	})
+	id, err := send(ctx)
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -330,7 +385,7 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 	case errors.Is(err, instance.ErrNotConnected), errors.Is(err, instance.ErrAlreadyLinked):
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, instance.ErrInvalidRecipient), errors.Is(err, instance.ErrInvalidMedia),
-		errors.Is(err, instance.ErrInvalidReaction):
+		errors.Is(err, instance.ErrInvalidReaction), errors.Is(err, instance.ErrInvalidMessageRef):
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, instance.ErrMediaTooLarge):
 		writeError(w, http.StatusRequestEntityTooLarge, err.Error())

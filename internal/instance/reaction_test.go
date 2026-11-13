@@ -26,28 +26,28 @@ func TestValidEmoji(t *testing.T) {
 func TestReactionTarget(t *testing.T) {
 	const id = "3EB0F1E313827D8CDEB5AE"
 	// Private chat, message from the other person: the sender is the chat.
-	chat, sender, err := reactionTarget(Reaction{Chat: "5511987654321", MessageID: id, Emoji: "👍"})
+	chat, sender, err := reactionTarget(Reaction{MessageRef: MessageRef{Chat: "5511987654321", MessageID: id}, Emoji: "👍"})
 	if err != nil || sender != chat || chat.Server != types.DefaultUserServer {
 		t.Fatalf("private: chat=%v sender=%v err=%v", chat, sender, err)
 	}
 	// Own message: empty sender, so whatsmeow marks it as from me.
-	if _, sender, err = reactionTarget(Reaction{Chat: "5511987654321", MessageID: id, FromMe: true, Emoji: "👍"}); err != nil || !sender.IsEmpty() {
+	if _, sender, err = reactionTarget(Reaction{MessageRef: MessageRef{Chat: "5511987654321", MessageID: id, FromMe: true}, Emoji: "👍"}); err != nil || !sender.IsEmpty() {
 		t.Fatalf("fromMe: sender=%v err=%v", sender, err)
 	}
 	// Group, someone else's message: participant required.
-	_, _, err = reactionTarget(Reaction{Chat: "120363000000000000@g.us", MessageID: id, Emoji: "👍"})
-	if !errors.Is(err, ErrInvalidReaction) {
+	_, _, err = reactionTarget(Reaction{MessageRef: MessageRef{Chat: "120363000000000000@g.us", MessageID: id}, Emoji: "👍"})
+	if !errors.Is(err, ErrInvalidMessageRef) {
 		t.Fatalf("group without participant should fail, got %v", err)
 	}
-	chat, sender, err = reactionTarget(Reaction{Chat: "120363000000000000@g.us", MessageID: id, Participant: "123456789012345@lid", Emoji: "👍"})
+	chat, sender, err = reactionTarget(Reaction{MessageRef: MessageRef{Chat: "120363000000000000@g.us", MessageID: id, Participant: "123456789012345@lid"}, Emoji: "👍"})
 	if err != nil || chat.Server != types.GroupServer || sender.Server != types.HiddenUserServer {
 		t.Fatalf("group: chat=%v sender=%v err=%v", chat, sender, err)
 	}
 	// Bad message id and text instead of an emoji.
-	if _, _, err = reactionTarget(Reaction{Chat: "5511987654321", MessageID: "a b", Emoji: "👍"}); !errors.Is(err, ErrInvalidReaction) {
+	if _, _, err = reactionTarget(Reaction{MessageRef: MessageRef{Chat: "5511987654321", MessageID: "a b"}, Emoji: "👍"}); !errors.Is(err, ErrInvalidMessageRef) {
 		t.Fatalf("bad id should fail, got %v", err)
 	}
-	if _, _, err = reactionTarget(Reaction{Chat: "5511987654321", MessageID: id, Emoji: "great"}); !errors.Is(err, ErrInvalidReaction) {
+	if _, _, err = reactionTarget(Reaction{MessageRef: MessageRef{Chat: "5511987654321", MessageID: id}, Emoji: "great"}); !errors.Is(err, ErrInvalidReaction) {
 		t.Fatalf("text emoji should fail, got %v", err)
 	}
 }
