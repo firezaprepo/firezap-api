@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.mau.fi/whatsmeow"
@@ -53,6 +54,7 @@ type Info struct {
 	Phone      string    `json:"phone,omitempty"`
 	WebhookURL string    `json:"webhookUrl,omitempty"`
 	CreatedAt  time.Time `json:"createdAt"`
+	Sending    SendStats `json:"sending"`
 }
 
 // QRInfo is the current QR code of an instance waiting to be linked.
@@ -70,18 +72,22 @@ type runtime struct {
 	qr        string
 	qrExpires time.Time
 
-	sendMu   sync.Mutex
-	lastSend time.Time
+	// Sending: one message at a time per instance, in arrival order (a channel of capacity 1
+	// hands the slot to the waiting goroutines first come, first served).
+	sendSlot chan struct{}
+	queued   atomic.Int32
+	limMu    sync.Mutex
+	limit    sendLimiter
 }
 
 // Manager owns every instance.
 type Manager struct {
-	store       *store.Store
-	container   *sqlstore.Container
-	hooks       *webhook.Dispatcher
-	log         *slog.Logger
-	waLog       waLog.Logger
-	minInterval time.Duration
+	store     *store.Store
+	container *sqlstore.Container
+	hooks     *webhook.Dispatcher
+	log       *slog.Logger
+	waLog     waLog.Logger
+	limits    SendLimits
 
 	mu        sync.RWMutex
 	instances map[string]*runtime
@@ -89,11 +95,15 @@ type Manager struct {
 
 // NewManager creates the manager. Call Restore to reconnect the instances that were linked.
 func NewManager(st *store.Store, container *sqlstore.Container, hooks *webhook.Dispatcher,
-	log *slog.Logger, wlog waLog.Logger, minInterval time.Duration) *Manager {
+	log *slog.Logger, wlog waLog.Logger, limits SendLimits) *Manager {
 	return &Manager{
 		store: st, container: container, hooks: hooks, log: log, waLog: wlog,
-		minInterval: minInterval, instances: map[string]*runtime{},
+		limits: limits, instances: map[string]*runtime{},
 	}
+}
+
+func (m *Manager) newRuntime(rec store.Instance, status Status) *runtime {
+	return &runtime{rec: rec, status: status, sendSlot: make(chan struct{}, 1), limit: sendLimiter{limits: m.limits}}
 }
 
 // Restore loads every instance and reconnects the ones that are linked to a number, so a
@@ -104,7 +114,7 @@ func (m *Manager) Restore(ctx context.Context) error {
 		return err
 	}
 	for _, rec := range recs {
-		rt := &runtime{rec: rec, status: StatusDisconnected}
+		rt := m.newRuntime(rec, StatusDisconnected)
 		m.mu.Lock()
 		m.instances[rec.ID] = rt
 		m.mu.Unlock()
@@ -158,7 +168,7 @@ func (m *Manager) Create(ctx context.Context, id, name string) (Info, string, er
 	if err := m.store.Create(ctx, rec); err != nil {
 		return Info{}, "", err
 	}
-	rt := &runtime{rec: rec, status: StatusDisconnected}
+	rt := m.newRuntime(rec, StatusDisconnected)
 	m.mu.Lock()
 	m.instances[id] = rt
 	m.mu.Unlock()
@@ -192,7 +202,15 @@ func (rt *runtime) info() Info {
 	if rt.client != nil && rt.client.Store.ID != nil {
 		in.Phone = rt.client.Store.ID.User
 	}
+	in.Sending = rt.sendStats()
 	return in
+}
+
+func (rt *runtime) sendStats() SendStats {
+	rt.limMu.Lock()
+	minute, hour := rt.limit.stats(time.Now())
+	rt.limMu.Unlock()
+	return SendStats{Queued: int(rt.queued.Load()), LastMinute: minute, LastHour: hour}
 }
 
 // Connect opens the connection. If the instance is not linked yet, it starts the QR flow:
@@ -401,12 +419,34 @@ func (m *Manager) connected(id string) (*runtime, *whatsmeow.Client, error) {
 	return rt, cli, nil
 }
 
-// paced sends a message respecting the minimum interval between two messages of the same
-// instance (SEND_MIN_INTERVAL_MS), so every kind of message shares one pace.
+// paced sends a message through the instance's queue: one at a time, in arrival order, and
+// within the sending limits (SEND_MIN_INTERVAL_MS, SEND_MAX_PER_MINUTE, SEND_MAX_PER_HOUR), so
+// every kind of message shares one pace. It never waits past the request's deadline: when the
+// queue is full or the limits would hold the message too long, it returns a *RateLimitError
+// and nothing is sent.
 func (m *Manager) paced(ctx context.Context, rt *runtime, cli *whatsmeow.Client, jid types.JID, msg *waE2E.Message) (string, error) {
-	rt.sendMu.Lock()
-	defer rt.sendMu.Unlock()
-	if wait := m.minInterval - time.Since(rt.lastSend); wait > 0 {
+	queued := int(rt.queued.Add(1))
+	defer rt.queued.Add(-1)
+	if m.limits.QueueMax > 0 && queued > m.limits.QueueMax {
+		return "", &RateLimitError{Reason: "the send queue of this instance is full", RetryAfter: m.backlog(rt, queued)}
+	}
+	select {
+	case rt.sendSlot <- struct{}{}:
+	case <-ctx.Done():
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", &RateLimitError{Reason: "the send queue of this instance is busy", RetryAfter: m.backlog(rt, int(rt.queued.Load()))}
+		}
+		return "", ctx.Err()
+	}
+	defer func() { <-rt.sendSlot }()
+
+	rt.limMu.Lock()
+	at := rt.limit.next(time.Now())
+	rt.limMu.Unlock()
+	if wait := time.Until(at); wait > 0 {
+		if deadline, ok := ctx.Deadline(); ok && at.After(deadline) {
+			return "", &RateLimitError{Reason: "the sending limit of this instance was reached", RetryAfter: wait}
+		}
 		select {
 		case <-ctx.Done():
 			return "", ctx.Err()
@@ -414,11 +454,27 @@ func (m *Manager) paced(ctx context.Context, rt *runtime, cli *whatsmeow.Client,
 		}
 	}
 	resp, err := cli.SendMessage(ctx, jid, msg)
-	rt.lastSend = time.Now()
+	// Counted even when it failed: WhatsApp may have received it, and a number that is failing
+	// should slow down, not speed up.
+	rt.limMu.Lock()
+	rt.limit.record(time.Now())
+	rt.limMu.Unlock()
 	if err != nil {
 		return "", fmt.Errorf("send failed: %w", err)
 	}
 	return resp.ID, nil
+}
+
+// backlog estimates how long the messages waiting in the queue will take to go.
+func (m *Manager) backlog(rt *runtime, waiting int) time.Duration {
+	rt.limMu.Lock()
+	wait := time.Until(rt.limit.next(time.Now()))
+	rt.limMu.Unlock()
+	wait += time.Duration(waiting) * m.limits.MinInterval
+	if wait < time.Second {
+		wait = time.Second
+	}
+	return wait
 }
 
 // Shutdown closes every connection without unlinking the numbers.
@@ -530,17 +586,24 @@ func (m *Manager) handle(rt *runtime, cli *whatsmeow.Client, evt any) {
 			status = "delivered"
 		case types.ReceiptTypeRead:
 			status = "read"
+		case types.ReceiptTypePlayed:
+			status = "played" // a voice note or video was played
 		default:
 			return
 		}
+		ctx, lids := context.Background(), lidsOf(cli)
 		data := map[string]any{
 			"ids":       e.MessageIDs,
 			"chat":      e.Chat.String(),
 			"status":    status,
 			"timestamp": e.Timestamp.UTC(),
 		}
-		if !e.IsGroup {
-			data["chatPn"] = phoneJID(context.Background(), lidsOf(cli), e.Chat, types.JID{})
+		if e.IsGroup {
+			// In a group every participant sends their own receipt.
+			data["participant"] = e.Sender.ToNonAD().String()
+			data["participantPn"] = phoneJID(ctx, lids, e.Sender, e.SenderAlt)
+		} else {
+			data["chatPn"] = phoneJID(ctx, lids, e.Chat, e.SenderAlt)
 		}
 		m.emit(rt, "message.status", data)
 	}

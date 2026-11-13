@@ -63,7 +63,7 @@ func run() error {
 	}
 
 	// The name shown on the phone under "Linked devices".
-	wastore.SetOSInfo("FireZAP API", [3]uint32{0, 1, 0})
+	wastore.SetOSInfo("FireZAP API", [3]uint32{0, 2, 0})
 	container := sqlstore.NewWithDB(db, "postgres", wlog.Sub("store"))
 	if err := container.Upgrade(ctx); err != nil {
 		return fmt.Errorf("prepare session store: %w", err)
@@ -73,7 +73,12 @@ func run() error {
 	if cfg.WebhookAllowPrivate {
 		log.Warn("WEBHOOK_ALLOW_PRIVATE is on: webhooks may reach loopback and private networks")
 	}
-	manager := instance.NewManager(st, container, hooks, log, wlog, cfg.SendMinInterval)
+	manager := instance.NewManager(st, container, hooks, log, wlog, instance.SendLimits{
+		MinInterval: cfg.SendMinInterval,
+		PerMinute:   cfg.SendMaxPerMinute,
+		PerHour:     cfg.SendMaxPerHour,
+		QueueMax:    cfg.SendQueueMax,
+	})
 	if err := manager.Restore(ctx); err != nil {
 		return fmt.Errorf("restore instances: %w", err)
 	}

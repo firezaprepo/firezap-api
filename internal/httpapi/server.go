@@ -10,8 +10,10 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -25,7 +27,7 @@ import (
 )
 
 // Version is the API version reported by the root endpoint.
-const Version = "0.1.0-dev"
+const Version = "0.2.0-dev"
 
 const (
 	maxBody       = 1 << 20 // 1 MB
@@ -70,6 +72,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /instances/{id}/webhook", s.inst(s.setWebhook))
 	mux.HandleFunc("POST /instances/{id}/messages/text", s.inst(s.sendText))
 	mux.HandleFunc("POST /instances/{id}/messages/media", s.inst(s.sendMedia))
+	mux.HandleFunc("POST /instances/{id}/messages/reaction", s.inst(s.sendReaction))
 	mux.HandleFunc("POST /instances/{id}/media/download", s.inst(s.downloadMedia))
 
 	return s.logRequests(mux)
@@ -286,17 +289,48 @@ func (s *Server) sendText(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"id": id})
 }
 
+func (s *Server) sendReaction(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Chat        string `json:"chat"`
+		MessageID   string `json:"messageId"`
+		FromMe      bool   `json:"fromMe"`
+		Participant string `json:"participant"`
+		Emoji       string `json:"emoji"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	id, err := s.manager.SendReaction(ctx, r.PathValue("id"), instance.Reaction{
+		Chat: body.Chat, MessageID: strings.TrimSpace(body.MessageID), FromMe: body.FromMe,
+		Participant: body.Participant, Emoji: body.Emoji,
+	})
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id})
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 func (s *Server) fail(w http.ResponseWriter, err error) {
+	var limited *instance.RateLimitError
 	switch {
+	case errors.As(err, &limited):
+		// Nothing was sent: the caller can retry after the given number of seconds.
+		secs := int(math.Ceil(limited.RetryAfter.Seconds()))
+		w.Header().Set("Retry-After", strconv.Itoa(secs))
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": limited.Reason, "retryAfter": secs})
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "instance not found")
 	case errors.Is(err, instance.ErrExists):
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, instance.ErrNotConnected), errors.Is(err, instance.ErrAlreadyLinked):
 		writeError(w, http.StatusConflict, err.Error())
-	case errors.Is(err, instance.ErrInvalidRecipient), errors.Is(err, instance.ErrInvalidMedia):
+	case errors.Is(err, instance.ErrInvalidRecipient), errors.Is(err, instance.ErrInvalidMedia),
+		errors.Is(err, instance.ErrInvalidReaction):
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, instance.ErrMediaTooLarge):
 		writeError(w, http.StatusRequestEntityTooLarge, err.Error())

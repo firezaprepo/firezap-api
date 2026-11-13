@@ -29,6 +29,8 @@
 - [API overview](#api-overview)
 - [Webhooks](#webhooks)
 - [Media](#media)
+- [Reactions](#reactions)
+- [Sending limits](#sending-limits)
 - [Dashboard](#dashboard)
 - [Responsible use](#responsible-use)
 - [Roadmap](#roadmap)
@@ -141,6 +143,10 @@ All settings come from environment variables (`.env`). The full list will live i
 | `HTTP_PORT` | Port for the API and the dashboard | `8080` |
 | `PUBLIC_URL` | Public address of your server | — |
 | `MEDIA_MAX_MB` | Largest file sent or downloaded, in MB (1 to 100). Files are held in memory while sent | `16` |
+| `SEND_MIN_INTERVAL_MS` | Minimum time between two messages of the same instance, in milliseconds | `1000` |
+| `SEND_MAX_PER_MINUTE` | Most messages one instance sends in any 60 seconds (`0` = no limit) | `30` |
+| `SEND_MAX_PER_HOUR` | Most messages one instance sends in any 60 minutes (`0` = no limit) | `600` |
+| `SEND_QUEUE_MAX` | Most send requests waiting for their turn per instance; more get `429` | `50` |
 | `WEBHOOK_TIMEOUT` | Webhook request timeout, in seconds | `10` |
 | `WEBHOOK_ALLOW_PRIVATE` | Allow webhooks to loopback and private networks (same host or Docker network). Keep `false` if other people can set webhooks; cloud metadata stays blocked | `false` |
 | `DEFAULT_LANGUAGE` | Dashboard language: `en` or `pt-BR` | `en` |
@@ -189,12 +195,14 @@ Each instance can send events to a URL of your choice:
 | Event | When |
 |---|---|
 | `message.received` | A new message arrives |
-| `message.status` | A message you sent was delivered or read |
+| `message.status` | A message you sent was `delivered`, `read` or `played` (voice notes and videos) |
 | `connection.update` | The instance connected, disconnected or needs a new QR code |
 | `group.update` | Group name, participants or settings changed |
 | `call.received` | Incoming call (logged; calls are not answered by the API) |
 
-`message.received` carries `sender`/`chat` as WhatsApp sends them — often a LID (`…@lid`), which is not a phone number — plus `senderPn` and, in private chats, `chatPn` with the phone-number JID when it is known. `chatType` says what kind of chat it is: `private`, `group`, `status` (WhatsApp Status), `broadcast` or `newsletter` (a Channel) — filter out the ones you do not handle. Deleted and edited messages arrive with `type` `revoke` or `edit` and the affected message id in `target`.
+`message.received` carries `sender`/`chat` as WhatsApp sends them — often a LID (`…@lid`), which is not a phone number — plus `senderPn` and, in private chats, `chatPn` with the phone-number JID when it is known. `chatType` says what kind of chat it is: `private`, `group`, `status` (WhatsApp Status), `broadcast` or `newsletter` (a Channel) — filter out the ones you do not handle. Deleted and edited messages arrive with `type` `revoke` or `edit` and the affected message id in `target`; reactions arrive with `type` `reaction`, the emoji in `text` (empty when the reaction was removed) and the message reacted to in `target`.
+
+`message.status` carries the message `ids`, the `chat` and the `status`. In a group every participant sends their own receipt, identified by `participant` and `participantPn`; in a private chat, `chatPn` has the phone number when it is known.
 
 The webhook URL must be an `http` or `https` address that does not point to loopback, private or link-local networks (see `WEBHOOK_ALLOW_PRIVATE`). The secret you send is never echoed back; if you leave it empty, one is generated and shown once.
 
@@ -227,6 +235,35 @@ Images must be JPEG or PNG and videos MP4; voice notes (`"ptt": true`) must be O
 other formats are refused instead of arriving broken on the phone, so send them as a document.
 Media URLs follow the same address rules as webhooks. Files are limited by `MEDIA_MAX_MB`.
 
+## Reactions
+
+React with `POST /instances/{id}/messages/reaction`, using the values of the `message.received`
+event: `chat`, the message `id` as `messageId`, and `fromMe` when the message was sent by your
+number. In a group, reacting to someone else's message also needs their `sender` as
+`participant`. An empty `emoji` removes your reaction.
+
+```bash
+curl -X POST https://api.example.com/instances/my-number/messages/reaction \
+  -H "Authorization: Bearer INSTANCE_KEY" -H "Content-Type: application/json" \
+  -d '{"chat": "5511999999999@s.whatsapp.net", "messageId": "3EB0F1E313827D8CDEB5AE", "emoji": "👍"}'
+```
+
+## Sending limits
+
+Every message an instance sends — text, media or reaction — goes through one queue per
+instance: one at a time, in arrival order, respecting `SEND_MIN_INTERVAL_MS`,
+`SEND_MAX_PER_MINUTE` and `SEND_MAX_PER_HOUR`. Each instance has its own counters, so a busy
+number never slows down the others.
+
+A request waits for its turn while that fits in its time limit. When the queue is full
+(`SEND_QUEUE_MAX`) or the limits would hold the message too long, the API answers
+`429 Too Many Requests` with a `Retry-After` header and `retryAfter` (seconds) in the body —
+**nothing was sent**, so it is safe to try again later. `GET /instances/{id}` shows the current
+activity in `sending`: `queued`, `lastMinute` and `lastHour`.
+
+The defaults suit customer service. They are a protection, not a guarantee: WhatsApp decides
+on its own what it considers abuse, and no limit makes unsolicited bulk messages safe.
+
 ## Dashboard
 
 The dashboard runs together with the API, on the same port, and lets you:
@@ -253,9 +290,13 @@ bulk messages. If you need guaranteed stability and scale, use the **Cloud API m
 
 This project is meant for legitimate customer communication. It **does not** and **will not**
 include features to evade WhatsApp's anti-abuse systems (device spoofing, fake activity,
-emulator farms). What it does include, to protect you and your contacts:
+emulator farms). What it includes, to protect you and your contacts:
 
-- Rate limits per instance and gradual limits for newly connected numbers
+- Sending limits per instance: minimum interval, per minute and per hour (see [Sending limits](#sending-limits))
+
+Planned:
+
+- Gradual limits for newly connected numbers
 - Opt-out handling: contacts who reply with a stop word are not messaged again
 - Clear logs of everything that was sent
 
@@ -265,7 +306,7 @@ and the GDPR (EU).
 
 ## Roadmap
 
-- [ ] **v0.1** — Instances (QR and pairing code), text messages, receiving messages, webhooks, persistent sessions
+- [x] **v0.1** — Instances (QR and pairing code), text messages, receiving messages, webhooks, persistent sessions
 - [ ] **v0.2** — Media, audio, reactions, receipts, send queue with rate limits
 - [ ] **v0.3** — Groups (create, manage participants, invite links)
 - [ ] **v0.4** — Dashboard (English and Portuguese)

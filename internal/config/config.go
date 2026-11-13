@@ -26,6 +26,12 @@ type Config struct {
 	// SendMinInterval is the minimum time between two messages sent by the same instance.
 	// It keeps the sending pace close to normal human use, which protects the number.
 	SendMinInterval time.Duration
+	// SendMaxPerMinute and SendMaxPerHour cap the messages one instance sends in any 60-second
+	// and 60-minute window (0 = no limit). SendQueueMax is how many send requests may wait
+	// for their turn; more are refused with 429.
+	SendMaxPerMinute int
+	SendMaxPerHour   int
+	SendQueueMax     int
 	// MediaMaxBytes is the largest attachment the API sends or downloads. Files are held in
 	// memory while sent, so this also bounds memory per request.
 	MediaMaxBytes int64
@@ -82,6 +88,17 @@ func load(getenv func(string) string) (Config, error) {
 		errs = append(errs, errors.New("SEND_MIN_INTERVAL_MS must be between 0 and 60000"))
 	}
 	cfg.SendMinInterval = time.Duration(interval) * time.Millisecond
+
+	intIn := func(key, def string, min, max int) int {
+		n, err := strconv.Atoi(get(key, def))
+		if err != nil || n < min || n > max {
+			errs = append(errs, fmt.Errorf("%s must be between %d and %d", key, min, max))
+		}
+		return n
+	}
+	cfg.SendMaxPerMinute = intIn("SEND_MAX_PER_MINUTE", "30", 0, 1000)
+	cfg.SendMaxPerHour = intIn("SEND_MAX_PER_HOUR", "600", 0, 100000)
+	cfg.SendQueueMax = intIn("SEND_QUEUE_MAX", "50", 1, 10000)
 
 	mediaMB, err := strconv.Atoi(get("MEDIA_MAX_MB", "16"))
 	if err != nil || mediaMB < 1 || mediaMB > 100 {

@@ -72,6 +72,24 @@ func TestWebhookAllowPrivate(t *testing.T) {
 	}
 }
 
+func TestSendLimits(t *testing.T) {
+	base := map[string]string{"FZ_ADMIN_KEY": strings.Repeat("k", 32), "DATABASE_URL": "postgres://x"}
+	cfg, err := load(env(base))
+	if err != nil || cfg.SendMaxPerMinute != 30 || cfg.SendMaxPerHour != 600 || cfg.SendQueueMax != 50 {
+		t.Fatalf("defaults: %v %d/%d/%d", err, cfg.SendMaxPerMinute, cfg.SendMaxPerHour, cfg.SendQueueMax)
+	}
+	base["SEND_MAX_PER_MINUTE"], base["SEND_MAX_PER_HOUR"] = "0", "0" // 0 turns a limit off
+	if cfg, err = load(env(base)); err != nil || cfg.SendMaxPerMinute != 0 || cfg.SendMaxPerHour != 0 {
+		t.Fatalf("zero: %v %+v", err, cfg)
+	}
+	for key, bad := range map[string]string{"SEND_MAX_PER_MINUTE": "-1", "SEND_MAX_PER_HOUR": "many", "SEND_QUEUE_MAX": "0"} {
+		b := map[string]string{"FZ_ADMIN_KEY": strings.Repeat("k", 32), "DATABASE_URL": "postgres://x", key: bad}
+		if _, err = load(env(b)); err == nil || !strings.Contains(err.Error(), key) {
+			t.Errorf("%s=%q accepted: %v", key, bad, err)
+		}
+	}
+}
+
 func TestMediaMaxMB(t *testing.T) {
 	base := map[string]string{"FZ_ADMIN_KEY": strings.Repeat("k", 32), "DATABASE_URL": "postgres://x"}
 	cfg, err := load(env(base))

@@ -12,7 +12,7 @@ import (
 type Description struct {
 	Kind    string // see MessageContent, plus "revoke" and "edit"
 	Text    string
-	Target  string // for "revoke" and "edit": the id of the message it changes
+	Target  string // for "revoke", "edit" and "reaction": the id of the message it refers to
 	Deliver bool   // false for protocol-only messages, which carry nothing a person sees
 	Media   *Media // the attachment of image, video, audio, document and sticker messages
 }
@@ -38,6 +38,10 @@ func Describe(m *waE2E.Message) Description {
 		default:
 			return Description{Kind: "protocol"}
 		}
+	}
+	if rm := m.GetReactionMessage(); rm != nil {
+		// An empty text means the sender removed their reaction.
+		return Description{Kind: "reaction", Text: rm.GetText(), Target: rm.GetKey().GetID(), Deliver: true}
 	}
 	kind, text := MessageContent(m)
 	if kind == "other" && isPlumbingOnly(m) {
