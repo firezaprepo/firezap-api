@@ -27,7 +27,7 @@ import (
 )
 
 // Version is the API version reported by the root endpoint.
-const Version = "0.2.0-dev"
+const Version = "0.3.0-dev"
 
 const (
 	maxBody       = 1 << 20 // 1 MB
@@ -75,6 +75,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /instances/{id}/messages/reaction", s.inst(s.sendReaction))
 	mux.HandleFunc("POST /instances/{id}/messages/edit", s.inst(s.editMessage))
 	mux.HandleFunc("POST /instances/{id}/messages/delete", s.inst(s.deleteMessage))
+
+	mux.HandleFunc("GET /instances/{id}/groups", s.inst(s.listGroups))
+	mux.HandleFunc("POST /instances/{id}/groups", s.inst(s.createGroup))
+	mux.HandleFunc("POST /instances/{id}/groups/join", s.inst(s.joinGroup))
+	mux.HandleFunc("GET /instances/{id}/groups/{jid}", s.inst(s.getGroup))
+	mux.HandleFunc("PATCH /instances/{id}/groups/{jid}", s.inst(s.updateGroup))
+	mux.HandleFunc("POST /instances/{id}/groups/{jid}/participants", s.inst(s.groupParticipants))
+	mux.HandleFunc("GET /instances/{id}/groups/{jid}/invite", s.inst(s.groupInvite(false)))
+	mux.HandleFunc("POST /instances/{id}/groups/{jid}/invite/reset", s.inst(s.groupInvite(true)))
+	mux.HandleFunc("POST /instances/{id}/groups/{jid}/leave", s.inst(s.leaveGroup))
 	mux.HandleFunc("POST /instances/{id}/media/download", s.inst(s.downloadMedia))
 
 	return s.logRequests(mux)
@@ -385,7 +395,8 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 	case errors.Is(err, instance.ErrNotConnected), errors.Is(err, instance.ErrAlreadyLinked):
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, instance.ErrInvalidRecipient), errors.Is(err, instance.ErrInvalidMedia),
-		errors.Is(err, instance.ErrInvalidReaction), errors.Is(err, instance.ErrInvalidMessageRef):
+		errors.Is(err, instance.ErrInvalidReaction), errors.Is(err, instance.ErrInvalidMessageRef),
+		errors.Is(err, instance.ErrInvalidGroup), errors.Is(err, instance.ErrOverLimit):
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, instance.ErrMediaTooLarge):
 		writeError(w, http.StatusRequestEntityTooLarge, err.Error())
@@ -394,6 +405,10 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 	case errors.Is(err, context.DeadlineExceeded):
 		writeError(w, http.StatusGatewayTimeout, "the operation timed out")
 	default:
+		if status, msg, ok := whatsappStatus(err); ok {
+			writeError(w, status, msg)
+			return
+		}
 		s.log.Error("request failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 	}

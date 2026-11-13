@@ -63,7 +63,7 @@ func run() error {
 	}
 
 	// The name shown on the phone under "Linked devices".
-	wastore.SetOSInfo("FireZAP API", [3]uint32{0, 2, 0})
+	wastore.SetOSInfo("FireZAP API", [3]uint32{0, 3, 0})
 	container := sqlstore.NewWithDB(db, "postgres", wlog.Sub("store"))
 	if err := container.Upgrade(ctx); err != nil {
 		return fmt.Errorf("prepare session store: %w", err)

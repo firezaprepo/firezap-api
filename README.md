@@ -31,6 +31,7 @@
 - [Media](#media)
 - [Reactions](#reactions)
 - [Replies, edits and deletes](#replies-edits-and-deletes)
+- [Groups](#groups)
 - [Sending limits](#sending-limits)
 - [Dashboard](#dashboard)
 - [Responsible use](#responsible-use)
@@ -179,7 +180,13 @@ instance key for instance routes. The complete reference will be published as an
 | `POST` | `/instances/{id}/messages/delete` | Delete a message for everyone |
 | `GET` | `/instances/{id}/groups` | List groups |
 | `POST` | `/instances/{id}/groups` | Create a group |
+| `GET` | `/instances/{id}/groups/{jid}` | Group info with members |
+| `PATCH` | `/instances/{id}/groups/{jid}` | Change name, description, `announce` or `locked` |
 | `POST` | `/instances/{id}/groups/{jid}/participants` | Add, remove, promote or demote participants |
+| `GET` | `/instances/{id}/groups/{jid}/invite` | Get the invite link |
+| `POST` | `/instances/{id}/groups/{jid}/invite/reset` | Revoke the invite link and make a new one |
+| `POST` | `/instances/{id}/groups/join` | Join a group with an invite link |
+| `POST` | `/instances/{id}/groups/{jid}/leave` | Leave a group |
 | `PUT` | `/instances/{id}/webhook` | Configure the webhook |
 
 Example — send a text message:
@@ -200,7 +207,7 @@ Each instance can send events to a URL of your choice:
 | `message.received` | A new message arrives |
 | `message.status` | A message you sent was `delivered`, `read` or `played` (voice notes and videos) |
 | `connection.update` | The instance connected, disconnected or needs a new QR code |
-| `group.update` | Group name, participants or settings changed |
+| `group.update` | Group name, description, settings or members changed, or this number joined a group |
 | `call.received` | Incoming call (logged; calls are not answered by the API) |
 
 `message.received` carries `sender`/`chat` as WhatsApp sends them — often a LID (`…@lid`), which is not a phone number — plus `senderPn` and, in private chats, `chatPn` with the phone-number JID when it is known. `chatType` says what kind of chat it is: `private`, `group`, `status` (WhatsApp Status), `broadcast` or `newsletter` (a Channel) — filter out the ones you do not handle. Deleted and edited messages arrive with `type` `revoke` or `edit` and the affected message id in `target`; reactions arrive with `type` `reaction`, the emoji in `text` (empty when the reaction was removed) and the message reacted to in `target`. A message that answers an earlier one carries `replyTo` with that message's `id` and `participant`.
@@ -274,9 +281,36 @@ delete someone else's message by sending `participant`. WhatsApp limits how old 
 
 Replies, edits and deletes go through the same queue and limits as any other message.
 
+## Groups
+
+`{jid}` is the group id (`120363…@g.us`, or just the digits). Changes need this number to be
+a group admin, as on the phone.
+
+- **Create** — `POST /instances/{id}/groups` with `name` (up to 100 characters) and, optionally,
+  `participants` (phone numbers or user ids). Without participants the group starts with your
+  number only: share the invite link instead.
+- **Members** — `POST /instances/{id}/groups/{jid}/participants` with `action` (`add`, `remove`,
+  `promote` or `demote`) and up to 50 `participants`. WhatsApp answers per person: check
+  `error` in each item — `403` usually means their privacy settings do not allow being added,
+  so send them the invite link.
+- **Settings** — `PATCH /instances/{id}/groups/{jid}` with any of `name`, `description`,
+  `announce` (only admins send messages) and `locked` (only admins edit the group info).
+- **Invite links** — `GET …/invite` returns the link; `POST …/invite/reset` revokes it and
+  returns a new one. `POST /instances/{id}/groups/join` with `link` joins a group.
+
+`group.update` reports changes with only the fields that changed: `name`, `description`,
+`announce`, `locked`, `join`, `leave`, `promote`, `demote`, `inviteReset` (the link itself
+is never sent), and `joined: true` when this number joins or is added to a group.
+
+> [!WARNING]
+> Adding people who did not ask to be in a group is the most reported kind of WhatsApp spam.
+> **Every person added counts as one message** in the sending limits (creating a group with 20
+> people counts as 21), and a request larger than `SEND_MAX_PER_MINUTE` is refused. Prefer
+> invite links.
+
 ## Sending limits
 
-Every message an instance sends — text, media or reaction — goes through one queue per
+Every message an instance sends — text, media, reaction, or a group change — goes through one queue per
 instance: one at a time, in arrival order, respecting `SEND_MIN_INTERVAL_MS`,
 `SEND_MAX_PER_MINUTE` and `SEND_MAX_PER_HOUR`. Each instance has its own counters, so a busy
 number never slows down the others.

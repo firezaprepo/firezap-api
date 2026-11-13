@@ -70,3 +70,21 @@ func TestLimiterNoLimits(t *testing.T) {
 		t.Fatalf("without limits it should always go now, got %v", got.Sub(t0))
 	}
 }
+
+func TestLimiterUnits(t *testing.T) {
+	l := sendLimiter{limits: SendLimits{PerMinute: 10}}
+	l.recordN(t0, 6)
+	// 4 more fit now; 5 must wait until the 6 sent at t0 leave the window.
+	if got := l.nextFor(t0.Add(time.Second), 4); !got.Equal(t0.Add(time.Second)) {
+		t.Fatalf("4 units should go now, got %v", got.Sub(t0))
+	}
+	if got := l.nextFor(t0.Add(time.Second), 5); !got.Equal(t0.Add(time.Minute)) {
+		t.Fatalf("5 units should wait for the window, got %v", got.Sub(t0))
+	}
+	if l.fits(11) || !l.fits(10) {
+		t.Fatal("a request larger than the per-minute limit can never pass")
+	}
+	if !(&sendLimiter{}).fits(1000) {
+		t.Fatal("without limits everything fits")
+	}
+}

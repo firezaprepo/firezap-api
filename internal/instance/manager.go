@@ -44,6 +44,8 @@ var (
 	ErrExists        = errors.New("an instance with this id already exists")
 	ErrNotConnected  = errors.New("instance is not connected")
 	ErrAlreadyLinked = errors.New("instance is already linked to a number")
+	// ErrOverLimit is a request larger than the sending limits allow at all (not retryable).
+	ErrOverLimit = errors.New("request exceeds the sending limits")
 )
 
 // Info is the public view of an instance.
@@ -429,44 +431,63 @@ func (m *Manager) connected(id string) (*runtime, *whatsmeow.Client, error) {
 // queue is full or the limits would hold the message too long, it returns a *RateLimitError
 // and nothing is sent.
 func (m *Manager) paced(ctx context.Context, rt *runtime, cli *whatsmeow.Client, jid types.JID, msg *waE2E.Message) (string, error) {
+	var id string
+	err := m.throttled(ctx, rt, 1, func() error {
+		resp, err := cli.SendMessage(ctx, jid, msg)
+		if err != nil {
+			return fmt.Errorf("send failed: %w", err)
+		}
+		id = resp.ID
+		return nil
+	})
+	return id, err
+}
+
+// throttled runs an action that WhatsApp counts as activity of the number (a message, or a
+// group change) through the instance's queue and limits. units is how many messages it is
+// worth: adding 20 people to a group counts as 20.
+func (m *Manager) throttled(ctx context.Context, rt *runtime, units int, action func() error) error {
+	rt.limMu.Lock()
+	fits := rt.limit.fits(units)
+	rt.limMu.Unlock()
+	if !fits {
+		return fmt.Errorf("%w: this request counts as %d messages, more than SEND_MAX_PER_MINUTE or SEND_MAX_PER_HOUR allow", ErrOverLimit, units)
+	}
 	queued := int(rt.queued.Add(1))
 	defer rt.queued.Add(-1)
 	if m.limits.QueueMax > 0 && queued > m.limits.QueueMax {
-		return "", &RateLimitError{Reason: "the send queue of this instance is full", RetryAfter: m.backlog(rt, queued)}
+		return &RateLimitError{Reason: "the send queue of this instance is full", RetryAfter: m.backlog(rt, queued)}
 	}
 	select {
 	case rt.sendSlot <- struct{}{}:
 	case <-ctx.Done():
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return "", &RateLimitError{Reason: "the send queue of this instance is busy", RetryAfter: m.backlog(rt, int(rt.queued.Load()))}
+			return &RateLimitError{Reason: "the send queue of this instance is busy", RetryAfter: m.backlog(rt, int(rt.queued.Load()))}
 		}
-		return "", ctx.Err()
+		return ctx.Err()
 	}
 	defer func() { <-rt.sendSlot }()
 
 	rt.limMu.Lock()
-	at := rt.limit.next(time.Now())
+	at := rt.limit.nextFor(time.Now(), units)
 	rt.limMu.Unlock()
 	if wait := time.Until(at); wait > 0 {
 		if deadline, ok := ctx.Deadline(); ok && at.After(deadline) {
-			return "", &RateLimitError{Reason: "the sending limit of this instance was reached", RetryAfter: wait}
+			return &RateLimitError{Reason: "the sending limit of this instance was reached", RetryAfter: wait}
 		}
 		select {
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return ctx.Err()
 		case <-time.After(wait):
 		}
 	}
-	resp, err := cli.SendMessage(ctx, jid, msg)
+	err := action()
 	// Counted even when it failed: WhatsApp may have received it, and a number that is failing
 	// should slow down, not speed up.
 	rt.limMu.Lock()
-	rt.limit.record(time.Now())
+	rt.limit.recordN(time.Now(), units)
 	rt.limMu.Unlock()
-	if err != nil {
-		return "", fmt.Errorf("send failed: %w", err)
-	}
-	return resp.ID, nil
+	return err
 }
 
 // backlog estimates how long the messages waiting in the queue will take to go.
@@ -586,6 +607,38 @@ func (m *Manager) handle(rt *runtime, cli *whatsmeow.Client, evt any) {
 			data["replyTo"] = q // this message answers an earlier one
 		}
 		m.emit(rt, "message.received", data)
+	case *events.GroupInfo:
+		c := groupChange{Chat: e.JID.String(), JoinReason: e.JoinReason,
+			Join: jidStrings(e.Join), Leave: jidStrings(e.Leave), Promote: jidStrings(e.Promote), Demote: jidStrings(e.Demote),
+			InviteReset: e.NewInviteLink != nil}
+		if e.Sender != nil {
+			c.Sender = jidString(*e.Sender)
+		}
+		if e.SenderPN != nil {
+			c.SenderPn = jidString(*e.SenderPN)
+		}
+		if e.Name != nil {
+			c.Name = &e.Name.Name
+		}
+		if e.Topic != nil {
+			c.Description = &e.Topic.Topic
+		}
+		if e.Announce != nil {
+			c.Announce = &e.Announce.IsAnnounce
+		}
+		if e.Locked != nil {
+			c.Locked = &e.Locked.IsLocked
+		}
+		m.emit(rt, "group.update", c.data())
+	case *events.JoinedGroup:
+		c := groupChange{Chat: e.JID.String(), Name: &e.Name, JoinReason: e.Reason, Joined: true}
+		if e.Sender != nil {
+			c.Sender = jidString(*e.Sender)
+		}
+		if e.SenderPN != nil {
+			c.SenderPn = jidString(*e.SenderPN)
+		}
+		m.emit(rt, "group.update", c.data())
 	case *events.Receipt:
 		var status string
 		switch e.Type {

@@ -31,6 +31,7 @@
 - [Mídia](#mídia)
 - [Reações](#reações)
 - [Responder, editar e apagar](#responder-editar-e-apagar)
+- [Grupos](#grupos)
 - [Limites de envio](#limites-de-envio)
 - [Painel](#painel)
 - [Uso responsável](#uso-responsável)
@@ -180,7 +181,13 @@ um arquivo OpenAPI.
 | `POST` | `/instances/{id}/messages/delete` | Apagar uma mensagem para todos |
 | `GET` | `/instances/{id}/groups` | Listar grupos |
 | `POST` | `/instances/{id}/groups` | Criar um grupo |
+| `GET` | `/instances/{id}/groups/{jid}` | Dados do grupo com os membros |
+| `PATCH` | `/instances/{id}/groups/{jid}` | Mudar nome, descrição, `announce` ou `locked` |
 | `POST` | `/instances/{id}/groups/{jid}/participants` | Adicionar, remover, promover ou rebaixar participantes |
+| `GET` | `/instances/{id}/groups/{jid}/invite` | Obter o link de convite |
+| `POST` | `/instances/{id}/groups/{jid}/invite/reset` | Revogar o link de convite e gerar outro |
+| `POST` | `/instances/{id}/groups/join` | Entrar num grupo pelo link de convite |
+| `POST` | `/instances/{id}/groups/{jid}/leave` | Sair de um grupo |
 | `PUT` | `/instances/{id}/webhook` | Configurar o webhook |
 
 Exemplo — enviar uma mensagem de texto:
@@ -201,7 +208,7 @@ Cada instância pode enviar os eventos para um endereço da sua escolha:
 | `message.received` | Chega uma mensagem nova |
 | `message.status` | Uma mensagem enviada foi entregue (`delivered`), lida (`read`) ou ouvida/assistida (`played`, em mensagem de voz e vídeo) |
 | `connection.update` | A instância conectou, desconectou ou precisa de um QR code novo |
-| `group.update` | Mudou o nome, os participantes ou as configurações de um grupo |
+| `group.update` | Mudou o nome, a descrição, as configurações ou os membros de um grupo, ou este número entrou num grupo |
 | `call.received` | Chegou uma ligação (registrada; a API não atende ligações) |
 
 `message.received` traz `sender`/`chat` como o WhatsApp manda — muitas vezes um LID (`…@lid`), que não é número de telefone — e também `senderPn` e, em conversa privada, `chatPn` com o JID do telefone quando ele é conhecido. `chatType` diz o tipo de conversa: `private`, `group`, `status` (Status do WhatsApp), `broadcast` ou `newsletter` (Canal) — filtre os que você não trata. Mensagens apagadas e editadas chegam com `type` `revoke` ou `edit` e o id da mensagem afetada em `target`; reações chegam com `type` `reaction`, o emoji em `text` (vazio quando a reação foi retirada) e a mensagem reagida em `target`. Uma mensagem que responde a outra traz `replyTo` com o `id` e o `participant` da mensagem respondida.
@@ -279,9 +286,37 @@ mensagem que pode ser apagada.
 
 Respostas, edições e exclusões passam pela mesma fila e pelos mesmos limites das outras mensagens.
 
+## Grupos
+
+`{jid}` é o id do grupo (`120363…@g.us`, ou só os dígitos). Alterações exigem que este número
+seja administrador do grupo, como no celular.
+
+- **Criar** — `POST /instances/{id}/groups` com `name` (até 100 caracteres) e, opcionalmente,
+  `participants` (telefones ou ids). Sem participantes o grupo começa só com o seu número:
+  compartilhe o link de convite.
+- **Membros** — `POST /instances/{id}/groups/{jid}/participants` com `action` (`add`, `remove`,
+  `promote` ou `demote`) e até 50 `participants`. O WhatsApp responde pessoa por pessoa:
+  confira `error` em cada item — `403` costuma ser a privacidade da pessoa, que não permite
+  ser adicionada; mande o link de convite.
+- **Configurações** — `PATCH /instances/{id}/groups/{jid}` com `name`, `description`,
+  `announce` (só administradores enviam mensagens) e/ou `locked` (só administradores editam
+  os dados do grupo).
+- **Links de convite** — `GET …/invite` devolve o link; `POST …/invite/reset` revoga e
+  devolve um novo. `POST /instances/{id}/groups/join` com `link` entra num grupo.
+
+`group.update` informa só os campos que mudaram: `name`, `description`, `announce`, `locked`,
+`join`, `leave`, `promote`, `demote`, `inviteReset` (o link em si nunca é enviado) e
+`joined: true` quando este número entra ou é adicionado a um grupo.
+
+> [!WARNING]
+> Adicionar pessoas que não pediram para estar num grupo é o tipo de spam mais denunciado no
+> WhatsApp. **Cada pessoa adicionada conta como uma mensagem** nos limites de envio (criar um
+> grupo com 20 pessoas conta 21), e um pedido maior que `SEND_MAX_PER_MINUTE` é recusado.
+> Prefira links de convite.
+
 ## Limites de envio
 
-Toda mensagem que uma instância envia — texto, mídia ou reação — passa por uma fila da própria
+Toda mensagem que uma instância envia — texto, mídia, reação ou alteração de grupo — passa por uma fila da própria
 instância: uma por vez, na ordem de chegada, respeitando `SEND_MIN_INTERVAL_MS`,
 `SEND_MAX_PER_MINUTE` e `SEND_MAX_PER_HOUR`. Cada instância tem os seus contadores, então um
 número movimentado nunca atrasa os outros.
