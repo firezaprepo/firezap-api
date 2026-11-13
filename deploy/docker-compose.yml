@@ -1,0 +1,54 @@
+# Production stack used by install.sh: PostgreSQL, the API and Caddy (automatic HTTPS with
+# Let's Encrypt). Only Caddy is published (ports 80 and 443); the API and the database stay on
+# the internal Docker network.
+#
+# install.sh runs it as:
+#   docker compose -f /opt/firezap-api/deploy/docker-compose.yml --env-file /opt/firezap-api/.env up -d
+name: firezap-api
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: firezap
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: firezap
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U firezap -d firezap"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: ..
+    image: firezap-api:local
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgres://firezap:${POSTGRES_PASSWORD}@postgres:5432/firezap?sslmode=disable
+      HTTP_PORT: "8080"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ../data/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

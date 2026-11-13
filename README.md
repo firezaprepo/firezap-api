@@ -119,7 +119,30 @@ Planned for the first releases:
 
 ## Quick start
 
-> Available with the first release.
+### One-command install (Ubuntu 24.04)
+
+On a fresh server, point two DNS names to it (A records) — one for the API, one for the
+dashboard; they may be the same — and run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/firezaprepo/firezap-api/main/install.sh -o install.sh
+sudo bash install.sh
+```
+
+The installer asks for the two addresses, installs Docker, downloads FireZAP API to
+`/opt/firezap-api`, generates the keys and starts PostgreSQL, the API and
+[Caddy](https://caddyserver.com), which gets the HTTPS certificates from Let's Encrypt by
+itself. At the end it shows the admin key. Without questions:
+
+```bash
+sudo bash install.sh --api-domain api.example.com --panel-domain panel.example.com --email you@example.com --yes
+```
+
+Update later with `sudo bash /opt/firezap-api/install.sh --update` (keys and data are kept).
+`--dry-run` shows what would be done without changing anything. Ports 80 and 443 must be free:
+the installer stops if another web server already uses them.
+
+### Manual (Docker Compose)
 
 ```bash
 git clone https://github.com/firezaprepo/firezap-api.git
@@ -128,7 +151,8 @@ cp .env.example .env        # set FZ_ADMIN_KEY and the database password
 docker compose up -d
 ```
 
-Open `http://YOUR_SERVER:8080` to access the dashboard and create your first instance.
+The API listens on `http://YOUR_SERVER:8080`; put it behind HTTPS (see `deploy/` for the
+Caddy setup the installer uses).
 
 **Minimum server (VPS):** 1 vCPU, 1 GB RAM and 10 GB of disk for a few instances. Add about
 50 MB of RAM per connected instance.

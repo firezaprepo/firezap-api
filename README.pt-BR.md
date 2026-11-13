@@ -119,7 +119,30 @@ Planejados para as primeiras versões:
 
 ## Início rápido
 
-> Disponível a partir da primeira versão.
+### Instalação com um comando (Ubuntu 24.04)
+
+Num servidor novo, aponte dois nomes de DNS para ele (registro A) — um para a API e outro para o
+painel; podem ser o mesmo — e rode:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/firezaprepo/firezap-api/main/install.sh -o install.sh
+sudo bash install.sh
+```
+
+O instalador pergunta os dois endereços, instala o Docker, baixa a FireZAP API em
+`/opt/firezap-api`, gera as chaves e sobe o PostgreSQL, a API e o
+[Caddy](https://caddyserver.com), que obtém sozinho os certificados HTTPS do Let's Encrypt. No
+fim ele mostra a chave de administrador. Sem perguntas:
+
+```bash
+sudo bash install.sh --api-domain api.exemplo.com.br --panel-domain painel.exemplo.com.br --email voce@exemplo.com.br --yes
+```
+
+Para atualizar depois: `sudo bash /opt/firezap-api/install.sh --update` (chaves e dados são
+mantidos). `--dry-run` mostra o que seria feito sem mudar nada. As portas 80 e 443 precisam
+estar livres: o instalador para se outro servidor web já estiver usando.
+
+### Manual (Docker Compose)
 
 ```bash
 git clone https://github.com/firezaprepo/firezap-api.git
@@ -128,7 +151,8 @@ cp .env.example .env        # defina FZ_ADMIN_KEY e a senha do banco
 docker compose up -d
 ```
 
-Acesse `http://SEU_SERVIDOR:8080` para abrir o painel e criar a primeira instância.
+A API responde em `http://SEU_SERVIDOR:8080`; coloque-a atrás de HTTPS (em `deploy/` está a
+configuração do Caddy que o instalador usa).
 
 **Servidor mínimo (VPS):** 1 vCPU, 1 GB de RAM e 10 GB de disco para algumas instâncias. Some
 cerca de 50 MB de RAM por instância conectada.
