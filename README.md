@@ -168,6 +168,7 @@ All settings come from environment variables (`.env`). The full list will live i
 | `DATABASE_URL` | PostgreSQL connection string. **Required.** | — |
 | `HTTP_PORT` | Port for the API and the dashboard | `8080` |
 | `PUBLIC_URL` | Public address of your server | — |
+| `PANEL_URL` | Address of the dashboard; its `/` opens the dashboard (it is also always at `/dashboard/`) | — |
 | `MEDIA_MAX_MB` | Largest file sent or downloaded, in MB (1 to 100). Files are held in memory while sent | `16` |
 | `SEND_MIN_INTERVAL_MS` | Minimum time between two messages of the same instance, in milliseconds | `1000` |
 | `SEND_MAX_PER_MINUTE` | Most messages one instance sends in any 60 seconds (`0` = no limit) | `30` |
@@ -350,12 +351,20 @@ on its own what it considers abuse, and no limit makes unsolicited bulk messages
 
 ## Dashboard
 
-The dashboard runs together with the API, on the same port, and lets you:
+The dashboard is built into the API binary (no separate service) and opens at
+`https://YOUR_API/dashboard/` — or at the root of the dashboard address (`PANEL_URL`, set by
+the installer). Sign in with the admin key. It lets you:
 
-- Create, connect and remove instances (QR code or pairing code)
-- See the status of each instance in real time
-- Configure webhooks and API keys
-- Read recent logs and failed webhook deliveries
+- Create instances (the instance API key is shown once), connect them by QR code or pairing
+  code, unlink the number and delete them
+- See each instance's status, number, webhook and sending activity, refreshed every 5 seconds
+- Set the webhook URL and secret
+- Send a test message
+
+The admin key stays only in that browser tab (`sessionStorage`) and is forgotten when the tab
+closes. The pages load nothing from other sites and run under a strict Content-Security-Policy.
+
+Planned: recent logs and failed webhook deliveries.
 
 The interface is available in **English** and **Portuguese (Brazil)** — choose it in the
 dashboard or set `DEFAULT_LANGUAGE`.
@@ -392,7 +401,7 @@ and the GDPR (EU).
 
 - [x] **v0.1** — Instances (QR and pairing code), text messages, receiving messages, webhooks, persistent sessions
 - [ ] **v0.2** — Media, audio, reactions, receipts, send queue with rate limits
-- [ ] **v0.3** — Groups (create, manage participants, invite links)
+- [x] **v0.3** — Groups (create, manage participants, invite links)
 - [ ] **v0.4** — Dashboard (English and Portuguese)
 - [ ] **v0.5** — Cloud API (official) mode behind the same endpoints
 - [ ] **v1.0** — OpenAPI reference, Docker image, production hardening

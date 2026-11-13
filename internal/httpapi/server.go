@@ -27,7 +27,7 @@ import (
 )
 
 // Version is the API version reported by the root endpoint.
-const Version = "0.3.0-dev"
+const Version = "0.4.0-dev"
 
 const (
 	maxBody       = 1 << 20 // 1 MB
@@ -44,6 +44,15 @@ type Server struct {
 	fetcher  *http.Client // downloads media URLs under the same address policy as webhooks
 	mediaMax int64
 	log      *slog.Logger
+
+	panelHost string       // host of PANEL_URL: its "/" opens the dashboard
+	dashboard http.Handler // nil: no dashboard
+}
+
+// WithDashboard serves the web dashboard at /dashboard/ and, on panelHost, at "/".
+func (s *Server) WithDashboard(h http.Handler, panelHost string) *Server {
+	s.dashboard, s.panelHost = h, strings.ToLower(panelHost)
+	return s
 }
 
 // New creates the server. mediaMax is the largest attachment, in bytes, sent or downloaded.
@@ -56,6 +65,10 @@ func New(adminKey string, manager *instance.Manager, st *store.Store, policy web
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.root)
+	if s.dashboard != nil {
+		mux.Handle("GET /dashboard/", s.dashboard)
+		mux.Handle("GET /dashboard", http.RedirectHandler("/dashboard/", http.StatusMovedPermanently))
+	}
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
@@ -91,6 +104,10 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) root(w http.ResponseWriter, r *http.Request) {
+	if s.dashboard != nil && s.panelHost != "" && strings.EqualFold(hostOnly(r.Host), s.panelHost) {
+		http.Redirect(w, r, "/dashboard/", http.StatusFound)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{
 		"name":    "FireZAP API",
 		"version": Version,
@@ -412,6 +429,14 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 		s.log.Error("request failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 	}
+}
+
+// hostOnly drops the port from a Host header.
+func hostOnly(h string) string {
+	if host, _, err := net.SplitHostPort(h); err == nil {
+		return host
+	}
+	return h
 }
 
 func decode(w http.ResponseWriter, r *http.Request, dst any) bool {

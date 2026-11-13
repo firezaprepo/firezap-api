@@ -168,6 +168,7 @@ Toda a configuração vem de variáveis de ambiente (`.env`). A lista completa v
 | `DATABASE_URL` | Conexão com o PostgreSQL. **Obrigatória.** | — |
 | `HTTP_PORT` | Porta da API e do painel | `8080` |
 | `PUBLIC_URL` | Endereço público do servidor | — |
+| `PANEL_URL` | Endereço do painel; a raiz `/` dele abre o painel (que também fica sempre em `/dashboard/`) | — |
 | `MEDIA_MAX_MB` | Maior arquivo enviado ou baixado, em MB (1 a 100). O arquivo fica na memória durante o envio | `16` |
 | `SEND_MIN_INTERVAL_MS` | Tempo mínimo entre duas mensagens da mesma instância, em milissegundos | `1000` |
 | `SEND_MAX_PER_MINUTE` | Máximo de mensagens que uma instância envia em quaisquer 60 segundos (`0` = sem limite) | `30` |
@@ -356,12 +357,21 @@ sozinho o que considera abuso, e nenhum limite torna seguro o envio em massa nã
 
 ## Painel
 
-O painel roda junto com a API, na mesma porta, e permite:
+O painel vem dentro do próprio binário da API (sem serviço separado) e abre em
+`https://SUA_API/dashboard/` — ou na raiz do endereço do painel (`PANEL_URL`, gravado pelo
+instalador). Entre com a chave de administrador. Ele permite:
 
-- Criar, conectar e remover instâncias (QR code ou código de pareamento)
-- Ver o estado de cada instância em tempo real
-- Configurar webhooks e chaves de API
-- Ler os logs recentes e as entregas de webhook que falharam
+- Criar instâncias (a chave de API da instância aparece uma única vez), conectar por QR code ou
+  código de pareamento, desvincular o número e apagar
+- Ver o estado, o número, o webhook e os envios de cada instância, atualizados a cada 5 segundos
+- Configurar a URL e o segredo do webhook
+- Enviar uma mensagem de teste
+
+A chave de administrador fica só naquela aba do navegador (`sessionStorage`) e é esquecida
+quando a aba fecha. As páginas não carregam nada de outros sites e rodam com uma
+Content-Security-Policy rígida.
+
+Planejado: logs recentes e entregas de webhook que falharam.
 
 A interface está disponível em **inglês** e **português (Brasil)** — escolha no próprio painel
 ou defina `DEFAULT_LANGUAGE`.
@@ -397,7 +407,7 @@ software e por cumprir os termos do WhatsApp e as leis de privacidade, como a LG
 
 - [x] **v0.1** — Instâncias (QR e código de pareamento), envio de texto, recebimento, webhooks, sessão persistente
 - [ ] **v0.2** — Mídia, áudio, reações, confirmações, fila de envio com limites
-- [ ] **v0.3** — Grupos (criar, gerenciar participantes, links de convite)
+- [x] **v0.3** — Grupos (criar, gerenciar participantes, links de convite)
 - [ ] **v0.4** — Painel (inglês e português)
 - [ ] **v0.5** — Modo Cloud API (oficial) nos mesmos endpoints
 - [ ] **v1.0** — Referência OpenAPI, imagem Docker, ajustes para produção

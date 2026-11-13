@@ -266,7 +266,7 @@ cat <<EOF
 ${c_ok}${c_b}FireZAP API installed.${c_0}
 
   API:        https://$API_DOMAIN
-  Dashboard:  https://$PANEL_DOMAIN   (the web dashboard arrives in v0.4; until then this address answers like the API)
+  Dashboard:  https://$PANEL_DOMAIN   (sign in with the admin key below)
 EOF
 if [ -n "$NEW_KEY" ]; then
   cat <<EOF

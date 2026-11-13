@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	waLog "go.mau.fi/whatsmeow/util/log"
 
 	"github.com/firezaprepo/firezap-api/internal/config"
+	"github.com/firezaprepo/firezap-api/internal/dashboard"
 	"github.com/firezaprepo/firezap-api/internal/httpapi"
 	"github.com/firezaprepo/firezap-api/internal/instance"
 	"github.com/firezaprepo/firezap-api/internal/store"
@@ -63,7 +65,7 @@ func run() error {
 	}
 
 	// The name shown on the phone under "Linked devices".
-	wastore.SetOSInfo("FireZAP API", [3]uint32{0, 3, 0})
+	wastore.SetOSInfo("FireZAP API", [3]uint32{0, 4, 0})
 	container := sqlstore.NewWithDB(db, "postgres", wlog.Sub("store"))
 	if err := container.Upgrade(ctx); err != nil {
 		return fmt.Errorf("prepare session store: %w", err)
@@ -85,8 +87,9 @@ func run() error {
 	defer manager.Shutdown()
 
 	srv := &http.Server{
-		Addr:              fmt.Sprintf(":%d", cfg.HTTPPort),
-		Handler:           httpapi.New(cfg.AdminKey, manager, st, hooks.Policy(), cfg.MediaMaxBytes, log).Handler(),
+		Addr: fmt.Sprintf(":%d", cfg.HTTPPort),
+		Handler: httpapi.New(cfg.AdminKey, manager, st, hooks.Policy(), cfg.MediaMaxBytes, log).
+			WithDashboard(dashboard.Handler(cfg.DefaultLanguage, httpapi.Version), panelHost(cfg.PanelURL)).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		// Media uploads and downloads move up to MEDIA_MAX_MB, so the body timeouts are longer
 		// than a JSON API would need.
@@ -112,4 +115,13 @@ func run() error {
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancelShutdown()
 	return srv.Shutdown(shutdownCtx)
+}
+
+// panelHost returns the host of PANEL_URL ("" when unset or invalid).
+func panelHost(panelURL string) string {
+	u, err := url.Parse(panelURL)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
 }

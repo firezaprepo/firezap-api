@@ -13,10 +13,13 @@ import (
 // Config holds every setting the server needs. All values come from the environment
 // (see .env.example), so the same binary runs anywhere without rebuilding.
 type Config struct {
-	AdminKey        string
-	DatabaseURL     string
-	HTTPPort        int
-	PublicURL       string
+	AdminKey    string
+	DatabaseURL string
+	HTTPPort    int
+	PublicURL   string
+	// PanelURL is the address of the web dashboard. Requests to its host that open "/" are
+	// sent to the dashboard; on any host it is also at /dashboard/.
+	PanelURL        string
 	WebhookTimeout  time.Duration
 	DefaultLanguage string
 	LogLevel        string
@@ -57,6 +60,7 @@ func load(getenv func(string) string) (Config, error) {
 		AdminKey:        get("FZ_ADMIN_KEY", ""),
 		DatabaseURL:     get("DATABASE_URL", ""),
 		PublicURL:       strings.TrimRight(get("PUBLIC_URL", ""), "/"),
+		PanelURL:        strings.TrimRight(get("PANEL_URL", ""), "/"),
 		DefaultLanguage: get("DEFAULT_LANGUAGE", "en"),
 		LogLevel:        strings.ToLower(get("LOG_LEVEL", "info")),
 	}
