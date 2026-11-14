@@ -411,7 +411,7 @@ and the GDPR (EU).
 ## Roadmap
 
 - [x] **v0.1** — Instances (QR and pairing code), text messages, receiving messages, webhooks, persistent sessions
-- [ ] **v0.2** — Media, audio, reactions, receipts, send queue with rate limits
+- [x] **v0.2** — Media, audio, reactions, receipts, send queue with rate limits
 - [x] **v0.3** — Groups (create, manage participants, invite links)
 - [ ] **v0.4** — Dashboard (English and Portuguese)
 - [ ] **v0.5** — Cloud API (official) mode behind the same endpoints

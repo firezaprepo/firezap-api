@@ -419,7 +419,7 @@ software e por cumprir os termos do WhatsApp e as leis de privacidade, como a LG
 ## Roadmap
 
 - [x] **v0.1** — Instâncias (QR e código de pareamento), envio de texto, recebimento, webhooks, sessão persistente
-- [ ] **v0.2** — Mídia, áudio, reações, confirmações, fila de envio com limites
+- [x] **v0.2** — Mídia, áudio, reações, confirmações, fila de envio com limites
 - [x] **v0.3** — Grupos (criar, gerenciar participantes, links de convite)
 - [ ] **v0.4** — Painel (inglês e português)
 - [ ] **v0.5** — Modo Cloud API (oficial) nos mesmos endpoints
