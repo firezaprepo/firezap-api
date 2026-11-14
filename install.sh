@@ -21,7 +21,7 @@ set -euo pipefail
 RAW="https://raw.githubusercontent.com/firezaprepo/firezap-api"
 BRANCH="main"
 DIR="/opt/firezap-api"
-VERSION="latest"
+IMAGE_TAG="latest"
 DOMAIN=""
 PANEL_DOMAIN=""
 EMAIL=""
@@ -89,7 +89,7 @@ while [ $# -gt 0 ]; do
     --lang)                LANGUAGE="${2:-}"; shift 2 ;;
     --behind-proxy)        MODE="proxy"; shift ;;
     --port)                PORT="${2:-}"; shift 2 ;;
-    --version)             VERSION="${2:-}"; shift 2 ;;
+    --version)             IMAGE_TAG="${2:-}"; shift 2 ;;
     --dir)                 DIR="${2:-}"; shift 2 ;;
     --branch)              BRANCH="${2:-}"; shift 2 ;;
     --update)              UPDATE=1; shift ;;
@@ -131,15 +131,16 @@ random_hex() { head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
 if [ "$DRY_RUN" = 0 ] && [ "$(id -u)" -ne 0 ]; then die "$(m "run as root: sudo bash install.sh" "rode como root: sudo bash install.sh")"; fi
 case "$DIR" in /*) ;; *) die "--dir: /absolute/path" ;; esac
 [[ "$PORT" =~ ^[0-9]{4,5}$ ]] && [ "$PORT" -ge 1024 ] && [ "$PORT" -le 65535 ] || die "$(m "--port must be between 1024 and 65535" "--port deve ficar entre 1024 e 65535")"
-[[ "$VERSION" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || die "--version?"
+[[ "$IMAGE_TAG" =~ ^[A-Za-z0-9._-]{1,64}$ ]] || die "--version?"
 [[ "$BRANCH" =~ ^[A-Za-z0-9._/-]{1,100}$ ]] || die "--branch?"
 
-OS_ID=""; OS_VERSION=""; OS_CODENAME=""; OS_NAME="?"
-if [ -r /etc/os-release ]; then
-  # shellcheck disable=SC1091
-  . /etc/os-release
-  OS_ID="${ID:-}"; OS_VERSION="${VERSION_ID:-}"; OS_CODENAME="${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}"; OS_NAME="${PRETTY_NAME:-?}"
-fi
+# /etc/os-release is read in a subshell: sourcing it here would overwrite our own variables
+# (it defines VERSION, NAME, ID…) — the first real install pulled the image "24.04.5 LTS".
+os_field() { [ -r /etc/os-release ] && (. /etc/os-release && eval "printf '%s' \"\${$1:-}\"") || true; }
+OS_ID="$(os_field ID)"
+OS_VERSION="$(os_field VERSION_ID)"
+OS_CODENAME="$(os_field UBUNTU_CODENAME)"; [ -n "$OS_CODENAME" ] || OS_CODENAME="$(os_field VERSION_CODENAME)"
+OS_NAME="$(os_field PRETTY_NAME)"; [ -n "$OS_NAME" ] || OS_NAME="?"
 case "$OS_ID:$OS_VERSION" in
   ubuntu:22.04|ubuntu:24.04|ubuntu:26.04|debian:12|debian:13) ;;
   *) die "$(m "unsupported system: $OS_NAME. Supported: Ubuntu 22.04, 24.04 and 26.04 LTS; Debian 12 and 13." \
@@ -314,7 +315,7 @@ else
   # Only a separate dashboard address: on the API address "/" keeps answering the API.
   if [ -n "$PANEL_DOMAIN" ]; then set_env PANEL_URL "https://$PANEL_DOMAIN"; else set_env PANEL_URL ""; fi
   set_env DEFAULT_LANGUAGE "$LANGUAGE"
-  set_env FZ_VERSION "$VERSION"
+  set_env FZ_VERSION "$IMAGE_TAG"
   set_env FZ_LOCAL_PORT "$PORT"
   if [ "$MODE" = caddy ]; then set_env COMPOSE_PROFILES caddy; else set_env COMPOSE_PROFILES ""; fi
   chmod 600 "$ENV_FILE"
