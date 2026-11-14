@@ -191,6 +191,9 @@ func (m *Manager) EditText(ctx context.Context, id, chatTo, messageID, text stri
 	if err != nil {
 		return "", err
 	}
+	if chat, err = m.recipient(ctx, rt, cli, chat); err != nil {
+		return "", err
+	}
 	return m.paced(ctx, rt, cli, chat, cli.BuildEdit(chat, messageID, &waE2E.Message{Conversation: proto.String(text)}))
 }
 
@@ -206,6 +209,9 @@ func (m *Manager) DeleteMessage(ctx context.Context, id string, r MessageRef) (s
 	}
 	rt, cli, err := m.connected(id)
 	if err != nil {
+		return "", err
+	}
+	if chat, err = m.recipient(ctx, rt, cli, chat); err != nil {
 		return "", err
 	}
 	return m.paced(ctx, rt, cli, chat, cli.BuildRevoke(chat, sender, r.MessageID))

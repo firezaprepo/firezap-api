@@ -80,6 +80,10 @@ type runtime struct {
 	queued   atomic.Int32
 	limMu    sync.Mutex
 	limit    sendLimiter
+
+	// What WhatsApp answered about phone numbers (see recipient.go).
+	dirMu sync.Mutex
+	dir   directory
 }
 
 // Manager owns every instance.
@@ -394,20 +398,31 @@ func (m *Manager) SetWebhook(ctx context.Context, id, url, secret string) (strin
 
 // SendText sends a text message, optionally as a reply (quote may be nil), and returns the
 // WhatsApp message ID. It goes through the instance's send queue and limits.
-func (m *Manager) SendText(ctx context.Context, id, to, text string, quote *Quote) (string, error) {
+func (m *Manager) SendText(ctx context.Context, id, to, text string, quote *Quote) (Sent, error) {
 	jid, err := ParseRecipient(to)
 	if err != nil {
-		return "", err
+		return Sent{}, err
 	}
 	rt, cli, err := m.connected(id)
 	if err != nil {
-		return "", err
+		return Sent{}, err
+	}
+	if jid, err = m.recipient(ctx, rt, cli, jid); err != nil {
+		return Sent{}, err
 	}
 	ci, err := quoteContext(cli, jid, quote)
 	if err != nil {
-		return "", err
+		return Sent{}, err
 	}
-	return m.paced(ctx, rt, cli, jid, withContext(&waE2E.Message{Conversation: proto.String(text)}, ci))
+	msgID, err := m.paced(ctx, rt, cli, jid, withContext(&waE2E.Message{Conversation: proto.String(text)}, ci))
+	return Sent{ID: msgID, To: jid.String()}, err
+}
+
+// Sent is the answer to a send: the WhatsApp message id and the account it went to (for a
+// phone number, the form WhatsApp actually has — see recipient.go).
+type Sent struct {
+	ID string `json:"id"`
+	To string `json:"to"`
 }
 
 // connected returns an instance whose number is linked and online.
@@ -435,7 +450,7 @@ func (m *Manager) paced(ctx context.Context, rt *runtime, cli *whatsmeow.Client,
 	err := m.throttled(ctx, rt, 1, func() error {
 		resp, err := cli.SendMessage(ctx, jid, msg)
 		if err != nil {
-			return fmt.Errorf("send failed: %w", err)
+			return fmt.Errorf("%w: %v", ErrSendFailed, err)
 		}
 		id = resp.ID
 		return nil

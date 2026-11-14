@@ -88,6 +88,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /instances/{id}/messages/reaction", s.inst(s.sendReaction))
 	mux.HandleFunc("POST /instances/{id}/messages/edit", s.inst(s.editMessage))
 	mux.HandleFunc("POST /instances/{id}/messages/delete", s.inst(s.deleteMessage))
+	mux.HandleFunc("POST /instances/{id}/contacts/check", s.inst(s.checkNumbers))
 
 	mux.HandleFunc("GET /instances/{id}/groups", s.inst(s.listGroups))
 	mux.HandleFunc("POST /instances/{id}/groups", s.inst(s.createGroup))
@@ -311,12 +312,12 @@ func (s *Server) sendText(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
-	id, err := s.manager.SendText(ctx, r.PathValue("id"), body.To, body.Text, body.ReplyTo.quote())
+	sent, err := s.manager.SendText(ctx, r.PathValue("id"), body.To, body.Text, body.ReplyTo.quote())
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"id": id})
+	writeJSON(w, http.StatusOK, sent)
 }
 
 // refBody points to an existing message with the values of its message.received event.
@@ -395,6 +396,23 @@ func (s *Server) sent(w http.ResponseWriter, r *http.Request, send func(context.
 	writeJSON(w, http.StatusOK, map[string]string{"id": id})
 }
 
+func (s *Server) checkNumbers(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Numbers []string `json:"numbers"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	res, err := s.manager.CheckNumbers(ctx, r.PathValue("id"), body.Numbers)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"numbers": res})
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 func (s *Server) fail(w http.ResponseWriter, err error) {
@@ -417,6 +435,11 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, instance.ErrMediaTooLarge):
 		writeError(w, http.StatusRequestEntityTooLarge, err.Error())
+	case errors.Is(err, instance.ErrNotOnWhatsApp):
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+	case errors.Is(err, instance.ErrSendFailed):
+		s.log.Warn("send failed", "error", err)
+		writeError(w, http.StatusBadGateway, err.Error())
 	case errors.Is(err, instance.ErrMediaGone):
 		writeError(w, http.StatusGone, err.Error())
 	case errors.Is(err, context.DeadlineExceeded):

@@ -115,7 +115,7 @@ func (s *Server) sendMedia(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"id": id})
+	writeJSON(w, http.StatusOK, id)
 }
 
 // fetchMedia downloads a file to send. The URL comes from the API user, so it follows the

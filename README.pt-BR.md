@@ -212,6 +212,7 @@ um arquivo OpenAPI.
 | `POST` | `/instances/{id}/logout` | Desconectar o número |
 | `DELETE` | `/instances/{id}` | Apagar a instância |
 | `POST` | `/instances/{id}/messages/text` | Enviar mensagem de texto |
+| `POST` | `/instances/{id}/contacts/check` | Conferir quais números estão no WhatsApp (até 20) |
 | `POST` | `/instances/{id}/messages/media` | Enviar imagem, vídeo, documento ou áudio |
 | `POST` | `/instances/{id}/media/download` | Baixar um arquivo recebido |
 | `POST` | `/instances/{id}/messages/reaction` | Reagir a uma mensagem |
@@ -236,6 +237,14 @@ curl -X POST https://api.exemplo.com/instances/meu-numero/messages/text \
   -H "Content-Type: application/json" \
   -d '{"to": "5511999999999", "text": "Olá pela FireZAP API!"}'
 ```
+
+### Números de telefone
+
+`to` aceita o número com DDI em qualquer formato (`+55 (11) 98765-4321`, `5511987654321`) ou um
+JID. Antes de enviar, a API pergunta ao WhatsApp qual forma do número existe e envia para ela —
+em celular brasileiro ela tenta **com e sem o nono dígito**, porque muitas contas ainda usam a
+forma de oito dígitos. A resposta de um envio traz `id` e `to`, o número para onde a mensagem foi
+de fato. Número que não está no WhatsApp responde `422`. As respostas ficam guardadas por um dia.
 
 ## Webhooks
 

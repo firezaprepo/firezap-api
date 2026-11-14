@@ -209,6 +209,7 @@ instance key for instance routes. The complete reference will be published as an
 | `POST` | `/instances/{id}/logout` | Disconnect the number |
 | `DELETE` | `/instances/{id}` | Delete the instance |
 | `POST` | `/instances/{id}/messages/text` | Send a text message |
+| `POST` | `/instances/{id}/contacts/check` | Check which numbers are on WhatsApp (up to 20) |
 | `POST` | `/instances/{id}/messages/media` | Send image, video, document or audio |
 | `POST` | `/instances/{id}/media/download` | Download a received file |
 | `POST` | `/instances/{id}/messages/reaction` | React to a message |
@@ -233,6 +234,14 @@ curl -X POST https://api.example.com/instances/my-number/messages/text \
   -H "Content-Type: application/json" \
   -d '{"to": "5511999999999", "text": "Hello from FireZAP API!"}'
 ```
+
+### Phone numbers
+
+`to` accepts the number with country code in any format (`+55 (11) 98765-4321`, `5511987654321`)
+or a JID. Before sending, the API asks WhatsApp which form of the number exists and sends to it —
+for Brazilian mobile numbers it tries **with and without the ninth digit**, since many accounts
+still use the eight-digit form. The answer of a send has `id` and `to`, the number the message
+really went to. A number that is not on WhatsApp answers `422`. Answers are cached for a day.
 
 ## Webhooks
 

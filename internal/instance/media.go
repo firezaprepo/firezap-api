@@ -286,25 +286,30 @@ func buildMediaMessage(out OutgoingMedia, up whatsmeow.UploadResponse) *waE2E.Me
 }
 
 // SendMedia uploads an attachment and sends it. It returns the WhatsApp message ID.
-func (m *Manager) SendMedia(ctx context.Context, id, to string, out OutgoingMedia) (string, error) {
+func (m *Manager) SendMedia(ctx context.Context, id, to string, out OutgoingMedia) (Sent, error) {
 	jid, err := ParseRecipient(to)
 	if err != nil {
-		return "", err
+		return Sent{}, err
 	}
 	if err := prepareOutgoing(&out); err != nil {
-		return "", err
+		return Sent{}, err
 	}
 	rt, cli, err := m.connected(id)
 	if err != nil {
-		return "", err
+		return Sent{}, err
 	}
-	ci, err := quoteContext(cli, jid, out.Quote) // checked before the upload, which is the slow part
+	// The number and the quote are checked before the upload, which is the slow part.
+	if jid, err = m.recipient(ctx, rt, cli, jid); err != nil {
+		return Sent{}, err
+	}
+	ci, err := quoteContext(cli, jid, out.Quote)
 	if err != nil {
-		return "", err
+		return Sent{}, err
 	}
 	up, err := cli.Upload(ctx, out.Data, mediaTypes[out.Kind])
 	if err != nil {
-		return "", fmt.Errorf("media upload failed: %w", err)
+		return Sent{}, fmt.Errorf("%w: media upload failed: %v", ErrSendFailed, err)
 	}
-	return m.paced(ctx, rt, cli, jid, withContext(buildMediaMessage(out, up), ci))
+	msgID, err := m.paced(ctx, rt, cli, jid, withContext(buildMediaMessage(out, up), ci))
+	return Sent{ID: msgID, To: jid.String()}, err
 }

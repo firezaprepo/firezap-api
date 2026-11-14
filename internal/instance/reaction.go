@@ -63,5 +63,11 @@ func (m *Manager) SendReaction(ctx context.Context, id string, r Reaction) (stri
 	if err != nil {
 		return "", err
 	}
+	if chat, err = m.recipient(ctx, rt, cli, chat); err != nil {
+		return "", err
+	}
+	if !r.FromMe && sender.Server == types.DefaultUserServer && chat.Server != types.GroupServer {
+		sender = chat // the other person of a private chat, in the form WhatsApp has
+	}
 	return m.paced(ctx, rt, cli, chat, cli.BuildReaction(chat, sender, r.MessageID, r.Emoji))
 }

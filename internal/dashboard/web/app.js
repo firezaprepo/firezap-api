@@ -285,17 +285,29 @@ function webhookDialog(i) {
   }));
 }
 
+// Shows a phone number the way people read it: +55 (85) 99154-0577. Accepts digits or a JID.
+function formatPhone(value) {
+  const d = String(value || "").split("@")[0].replace(/D/g, "");
+  if (d.startsWith("55") && (d.length === 12 || d.length === 13)) {
+    const area = d.slice(2, 4), rest = d.slice(4);
+    return "+55 (" + area + ") " + rest.slice(0, rest.length - 4) + "-" + rest.slice(-4);
+  }
+  return d ? "+" + d : "";
+}
+
 function testDialog(i) {
-  const to = el("input", { id: "f-to", inputmode: "numeric", required: true, autocomplete: "off" });
+  const to = el("input", { id: "f-to", inputmode: "tel", required: true, autocomplete: "off" });
+  const preview = el("p", { class: "muted small" }, t("phoneHint"));
+  to.addEventListener("input", () => { preview.textContent = to.value.trim() ? formatPhone(to.value) : t("phoneHint"); });
   const text = el("textarea", { id: "f-text", required: true, maxlength: "4096" });
   text.value = t("testDefault");
   openDialog(t("testTitle", { id: i.id }), form([
-    field("f-to", t("testTo"), to),
+    field("f-to", t("testTo"), to), preview,
     field("f-text", t("testText"), text),
   ], t("send"), async () => {
     const res = await api("POST", inst(i.id) + "/messages/text", { to: to.value, text: text.value });
     closeDialog();
-    toast(t("sentOk", { id: res.id }));
+    toast(t("sentTo", { to: formatPhone(res.to) }));
     refresh();
   }));
 }
