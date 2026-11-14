@@ -119,28 +119,38 @@ Planned for the first releases:
 
 ## Quick start
 
-### One-command install (Ubuntu 24.04)
+### One-command install (any Linux server)
 
-On a fresh server, point two DNS names to it (A records) — one for the API, one for the
-dashboard; they may be the same — and run:
+Point one DNS name (A record) to the server — for example `api.example.com` — and run:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/firezaprepo/firezap-api/main/install.sh -o install.sh
 sudo bash install.sh
 ```
 
-The installer asks for the two addresses, installs Docker, downloads FireZAP API to
-`/opt/firezap-api`, generates the keys and starts PostgreSQL, the API and
-[Caddy](https://caddyserver.com), which gets the HTTPS certificates from Let's Encrypt by
-itself. At the end it shows the admin key. Without questions:
+The installer asks for the address, installs Docker when it is missing (official
+`get.docker.com` script: Ubuntu, Debian, Rocky/Alma, Fedora…), downloads the published image
+`ghcr.io/firezaprepo/firezap-api` (amd64 and arm64 — nothing is compiled on the server),
+generates the keys and starts everything in `/opt/firezap-api`. At the end it shows the admin
+key. The dashboard is at `https://api.example.com/dashboard/`; `--panel-domain` adds a second
+address whose root opens it.
+
+HTTPS, one of two ways:
+
+- **Caddy** (default, on a server without a web server): takes ports 80 and 443 and gets the
+  Let's Encrypt certificates by itself.
+- **Behind your web server** (`--behind-proxy`, offered automatically when ports 80/443 are taken
+  by nginx, Apache, aaPanel, cPanel…): the API stays on `127.0.0.1:8080` (`--port` to change)
+  and the installer prints the nginx/Apache lines to add to your site.
+
+Without questions:
 
 ```bash
-sudo bash install.sh --api-domain api.example.com --panel-domain panel.example.com --email you@example.com --yes
+sudo bash install.sh --domain api.example.com --email you@example.com --lang en --yes
 ```
 
 Update later with `sudo bash /opt/firezap-api/install.sh --update` (keys and data are kept).
-`--dry-run` shows what would be done without changing anything. Ports 80 and 443 must be free:
-the installer stops if another web server already uses them.
+`--dry-run` shows what would be done without changing anything.
 
 ### Manual (Docker Compose)
 
@@ -151,8 +161,8 @@ cp .env.example .env        # set FZ_ADMIN_KEY and the database password
 docker compose up -d
 ```
 
-The API listens on `http://YOUR_SERVER:8080`; put it behind HTTPS (see `deploy/` for the
-Caddy setup the installer uses).
+The API listens on `http://YOUR_SERVER:8080`; put it behind HTTPS (`deploy/docker-compose.yml` is the setup the
+installer uses).
 
 **Minimum server (VPS):** 1 vCPU, 1 GB RAM and 10 GB of disk for a few instances. Add about
 50 MB of RAM per connected instance.

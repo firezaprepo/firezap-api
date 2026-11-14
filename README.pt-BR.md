@@ -119,28 +119,38 @@ Planejados para as primeiras versões:
 
 ## Início rápido
 
-### Instalação com um comando (Ubuntu 24.04)
+### Instalação com um comando (qualquer servidor Linux)
 
-Num servidor novo, aponte dois nomes de DNS para ele (registro A) — um para a API e outro para o
-painel; podem ser o mesmo — e rode:
+Aponte um nome de DNS (registro A) para o servidor — por exemplo `api.exemplo.com.br` — e rode:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/firezaprepo/firezap-api/main/install.sh -o install.sh
 sudo bash install.sh
 ```
 
-O instalador pergunta os dois endereços, instala o Docker, baixa a FireZAP API em
-`/opt/firezap-api`, gera as chaves e sobe o PostgreSQL, a API e o
-[Caddy](https://caddyserver.com), que obtém sozinho os certificados HTTPS do Let's Encrypt. No
-fim ele mostra a chave de administrador. Sem perguntas:
+O instalador pergunta o endereço, instala o Docker se faltar (script oficial `get.docker.com`:
+Ubuntu, Debian, Rocky/Alma, Fedora…), baixa a imagem publicada
+`ghcr.io/firezaprepo/firezap-api` (amd64 e arm64 — nada é compilado no servidor), gera as chaves
+e sobe tudo em `/opt/firezap-api`. No fim ele mostra a chave de administrador. O painel fica em
+`https://api.exemplo.com.br/dashboard/`; `--panel-domain` acrescenta um segundo endereço cuja
+raiz abre o painel.
+
+HTTPS, de um destes dois jeitos:
+
+- **Caddy** (padrão, em servidor sem servidor web): ocupa as portas 80 e 443 e obtém sozinho os
+  certificados do Let's Encrypt.
+- **Atrás do seu servidor web** (`--behind-proxy`, oferecido automaticamente quando nginx,
+  Apache, aaPanel, cPanel… já usam as portas 80/443): a API fica em `127.0.0.1:8080` (`--port`
+  para mudar) e o instalador mostra as linhas de nginx/Apache para pôr no seu site.
+
+Sem perguntas:
 
 ```bash
-sudo bash install.sh --api-domain api.exemplo.com.br --panel-domain painel.exemplo.com.br --email voce@exemplo.com.br --yes
+sudo bash install.sh --domain api.exemplo.com.br --email voce@exemplo.com.br --lang pt-BR --yes
 ```
 
 Para atualizar depois: `sudo bash /opt/firezap-api/install.sh --update` (chaves e dados são
-mantidos). `--dry-run` mostra o que seria feito sem mudar nada. As portas 80 e 443 precisam
-estar livres: o instalador para se outro servidor web já estiver usando.
+mantidos). `--dry-run` mostra o que seria feito sem mudar nada.
 
 ### Manual (Docker Compose)
 
@@ -151,8 +161,8 @@ cp .env.example .env        # defina FZ_ADMIN_KEY e a senha do banco
 docker compose up -d
 ```
 
-A API responde em `http://SEU_SERVIDOR:8080`; coloque-a atrás de HTTPS (em `deploy/` está a
-configuração do Caddy que o instalador usa).
+A API responde em `http://SEU_SERVIDOR:8080`; coloque-a atrás de HTTPS (`deploy/docker-compose.yml` é a
+configuração que o instalador usa).
 
 **Servidor mínimo (VPS):** 1 vCPU, 1 GB de RAM e 10 GB de disco para algumas instâncias. Some
 cerca de 50 MB de RAM por instância conectada.

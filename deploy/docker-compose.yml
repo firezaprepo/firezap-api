@@ -1,9 +1,12 @@
-# Production stack used by install.sh: PostgreSQL, the API and Caddy (automatic HTTPS with
-# Let's Encrypt). Only Caddy is published (ports 80 and 443); the API and the database stay on
-# the internal Docker network.
+# Production stack used by install.sh. It runs the published image — nothing is built on the
+# server. install.sh copies this file to /opt/firezap-api/docker-compose.yml next to the .env it
+# generates, so "docker compose" works from that folder with no extra flags.
 #
-# install.sh runs it as:
-#   docker compose -f /opt/firezap-api/deploy/docker-compose.yml --env-file /opt/firezap-api/.env up -d
+# Two ways to receive HTTPS traffic, chosen by COMPOSE_PROFILES in .env:
+#   caddy  — Caddy takes ports 80/443 and gets Let's Encrypt certificates by itself.
+#   (empty) — another web server on the machine (nginx, Apache, aaPanel, cPanel…) proxies to the
+#             API on 127.0.0.1:${FZ_LOCAL_PORT}.
+# The API always listens on loopback only; PostgreSQL is never published.
 name: firezap-api
 
 services:
@@ -23,19 +26,21 @@ services:
       retries: 10
 
   api:
-    build: ..
-    image: firezap-api:local
+    image: ghcr.io/firezaprepo/firezap-api:${FZ_VERSION:-latest}
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
-    env_file: ../.env
+    env_file: .env
     environment:
       DATABASE_URL: postgres://firezap:${POSTGRES_PASSWORD}@postgres:5432/firezap?sslmode=disable
       HTTP_PORT: "8080"
+    ports:
+      - "127.0.0.1:${FZ_LOCAL_PORT:-8080}:8080"
 
   caddy:
     image: caddy:2-alpine
+    profiles: ["caddy"]
     restart: unless-stopped
     depends_on:
       - api
@@ -44,7 +49,7 @@ services:
       - "443:443"
       - "443:443/udp"
     volumes:
-      - ../data/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
 
