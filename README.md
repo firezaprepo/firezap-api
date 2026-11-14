@@ -119,38 +119,39 @@ Planned for the first releases:
 
 ## Quick start
 
-### One-command install (any Linux server)
+### One-command install
 
-Point one DNS name (A record) to the server — for example `api.example.com` — and run:
+**Supported systems:** Ubuntu 22.04, 24.04 and 26.04 LTS; Debian 12 and 13 — amd64 or arm64.
+A clean VPS with 1 vCPU and 1 GB of RAM is enough to start.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/firezaprepo/firezap-api/main/install.sh -o install.sh
 sudo bash install.sh
 ```
 
-The installer asks for the address, installs Docker when it is missing (official
-`get.docker.com` script: Ubuntu, Debian, Rocky/Alma, Fedora…), downloads the published image
-`ghcr.io/firezaprepo/firezap-api` (amd64 and arm64 — nothing is compiled on the server),
-generates the keys and starts everything in `/opt/firezap-api`. At the end it shows the admin
-key. The dashboard is at `https://api.example.com/dashboard/`; `--panel-domain` adds a second
-address whose root opens it.
+The installer sets up **everything** and leaves it ready in the browser: Docker (official
+repository), PostgreSQL, the API with its web dashboard (published image
+`ghcr.io/firezaprepo/firezap-api` — nothing is compiled on the server) and HTTPS. It ends with
+the dashboard link and the admin key to sign in.
 
-HTTPS, one of two ways:
+- **With a domain** (recommended): point one A record — e.g. `api.example.com` — to the server
+  before installing; Caddy gets the Let's Encrypt certificate by itself. The dashboard is at
+  `https://api.example.com/dashboard/` (`--panel-domain` adds a second address for it).
+- **Without a domain**: press Enter at the address question (or `--no-domain`) and the server's
+  IP is used with a self-signed certificate — the browser warns once. Run the installer again
+  with `--domain` later.
+- **On a server that already has a web server** on ports 80/443 (nginx, Apache, aaPanel,
+  cPanel…), the installer offers `--behind-proxy`: the API stays on `127.0.0.1:8080` and it
+  prints the lines to add to your site.
 
-- **Caddy** (default, on a server without a web server): takes ports 80 and 443 and gets the
-  Let's Encrypt certificates by itself.
-- **Behind your web server** (`--behind-proxy`, offered automatically when ports 80/443 are taken
-  by nginx, Apache, aaPanel, cPanel…): the API stays on `127.0.0.1:8080` (`--port` to change)
-  and the installer prints the nginx/Apache lines to add to your site.
-
-Without questions:
+Messages are in Portuguese when the system is (or with `--lang pt-BR`). Without questions:
 
 ```bash
 sudo bash install.sh --domain api.example.com --email you@example.com --lang en --yes
 ```
 
 Update later with `sudo bash /opt/firezap-api/install.sh --update` (keys and data are kept).
-`--dry-run` shows what would be done without changing anything.
+`--dry-run` checks everything and shows what would be done without changing anything.
 
 ### Manual (Docker Compose)
 
