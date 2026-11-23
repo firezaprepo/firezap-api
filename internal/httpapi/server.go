@@ -83,6 +83,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /instances/{id}/pair", s.inst(s.pair))
 	mux.HandleFunc("POST /instances/{id}/logout", s.inst(s.logout))
 	mux.HandleFunc("PUT /instances/{id}/webhook", s.inst(s.setWebhook))
+	mux.HandleFunc("GET /instances/{id}/webhook/failures", s.inst(s.webhookFailures))
+	mux.HandleFunc("POST /instances/{id}/webhook/failures/retry", s.inst(s.webhookFailuresAct(true)))
+	mux.HandleFunc("POST /instances/{id}/webhook/failures/discard", s.inst(s.webhookFailuresAct(false)))
 	mux.HandleFunc("POST /instances/{id}/messages/text", s.inst(s.sendText))
 	mux.HandleFunc("POST /instances/{id}/messages/media", s.inst(s.sendMedia))
 	mux.HandleFunc("POST /instances/{id}/messages/reaction", s.inst(s.sendReaction))
@@ -186,7 +189,23 @@ func (s *Server) createInstance(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listInstances(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"instances": s.manager.List()})
+	list := s.manager.List()
+	counts := s.webhookCounts(r.Context())
+	for i := range list {
+		c := counts[list[i].ID]
+		list[i].Webhook = &c
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"instances": list})
+}
+
+// webhookCounts reads the outbox counters; on error the instances are shown without them.
+func (s *Server) webhookCounts(ctx context.Context) map[string]webhook.Counts {
+	counts, err := s.store.Outbox().Counts(ctx)
+	if err != nil {
+		s.log.Error("read webhook outbox counts", "error", err)
+		return map[string]webhook.Counts{}
+	}
+	return counts
 }
 
 func (s *Server) getInstance(w http.ResponseWriter, r *http.Request) {
@@ -195,6 +214,8 @@ func (s *Server) getInstance(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
+	c := s.webhookCounts(r.Context())[info.ID]
+	info.Webhook = &c
 	writeJSON(w, http.StatusOK, info)
 }
 

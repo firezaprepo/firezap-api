@@ -57,6 +57,9 @@ type Info struct {
 	WebhookURL string    `json:"webhookUrl,omitempty"`
 	CreatedAt  time.Time `json:"createdAt"`
 	Sending    SendStats `json:"sending"`
+	// Webhook is how many events wait for delivery and how many gave up (filled by the HTTP
+	// layer from the outbox).
+	Webhook *webhook.Counts `json:"webhook,omitempty"`
 }
 
 // QRInfo is the current QR code of an instance waiting to be linked.
@@ -80,6 +83,11 @@ type runtime struct {
 	queued   atomic.Int32
 	limMu    sync.Mutex
 	limit    sendLimiter
+	// Guarded by limMu too (see daily.go): today's counters, the failure breaker and when the
+	// current number was linked.
+	today  dayCount
+	brk    pause
+	linked *time.Time
 
 	// What WhatsApp answered about phone numbers (see recipient.go).
 	dirMu sync.Mutex
@@ -94,6 +102,8 @@ type Manager struct {
 	log       *slog.Logger
 	waLog     waLog.Logger
 	limits    SendLimits
+	daily     DailyLimits
+	pace      pacingStore
 
 	mu        sync.RWMutex
 	instances map[string]*runtime
@@ -101,15 +111,19 @@ type Manager struct {
 
 // NewManager creates the manager. Call Restore to reconnect the instances that were linked.
 func NewManager(st *store.Store, container *sqlstore.Container, hooks *webhook.Dispatcher,
-	log *slog.Logger, wlog waLog.Logger, limits SendLimits) *Manager {
-	return &Manager{
+	log *slog.Logger, wlog waLog.Logger, limits SendLimits, daily DailyLimits) *Manager {
+	m := &Manager{
 		store: st, container: container, hooks: hooks, log: log, waLog: wlog,
-		limits: limits, instances: map[string]*runtime{},
+		limits: limits, daily: daily, instances: map[string]*runtime{},
 	}
+	if st != nil {
+		m.pace = st
+	}
+	return m
 }
 
 func (m *Manager) newRuntime(rec store.Instance, status Status) *runtime {
-	return &runtime{rec: rec, status: status, sendSlot: make(chan struct{}, 1), limit: sendLimiter{limits: m.limits}}
+	return &runtime{rec: rec, status: status, sendSlot: make(chan struct{}, 1), limit: sendLimiter{limits: m.limits}, linked: rec.LinkedAt}
 }
 
 // Restore loads every instance and reconnects the ones that are linked to a number, so a
@@ -186,8 +200,9 @@ func (m *Manager) List() []Info {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	out := make([]Info, 0, len(m.instances))
+	now := time.Now()
 	for _, rt := range m.instances {
-		out = append(out, rt.info())
+		out = append(out, m.info(rt, now))
 	}
 	return out
 }
@@ -198,8 +213,24 @@ func (m *Manager) Get(id string) (Info, error) {
 	if err != nil {
 		return Info{}, err
 	}
-	return rt.info(), nil
+	return m.info(rt, time.Now()), nil
 }
+
+// info is the public view of an instance, with the day's sending.
+func (m *Manager) info(rt *runtime, now time.Time) Info {
+	// After a restart the day's counters are only read on the first send; read them here too,
+	// or the dashboard would show 0 for a day that already has sends. Cheap: it only reaches the
+	// database when the day changed.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	m.ensureDay(ctx, rt, now)
+	cancel()
+	in := rt.info()
+	in.Sending.Today = m.dayStats(rt, now)
+	return in
+}
+
+// linkedAt is when the current number was linked. The caller holds rt.limMu.
+func (rt *runtime) linkedAt() *time.Time { return rt.linked }
 
 func (rt *runtime) info() Info {
 	rt.mu.Lock()
@@ -414,7 +445,7 @@ func (m *Manager) SendText(ctx context.Context, id, to, text string, quote *Quot
 	if err != nil {
 		return Sent{}, err
 	}
-	msgID, err := m.paced(ctx, rt, cli, jid, withContext(&waE2E.Message{Conversation: proto.String(text)}, ci))
+	msgID, err := m.pacedNew(ctx, rt, cli, jid, withContext(&waE2E.Message{Conversation: proto.String(text)}, ci))
 	return Sent{ID: msgID, To: jid.String()}, err
 }
 
@@ -446,8 +477,20 @@ func (m *Manager) connected(id string) (*runtime, *whatsmeow.Client, error) {
 // queue is full or the limits would hold the message too long, it returns a *RateLimitError
 // and nothing is sent.
 func (m *Manager) paced(ctx context.Context, rt *runtime, cli *whatsmeow.Client, jid types.JID, msg *waE2E.Message) (string, error) {
+	return m.send(ctx, rt, cli, jid, msg, false)
+}
+
+// pacedNew is paced for a new message (text or media), which may open a chat with someone the
+// number never talked to: that counts against SEND_NEW_CHAT_SCHEDULE. Reactions, edits and
+// deletions use paced: they always refer to an existing conversation.
+func (m *Manager) pacedNew(ctx context.Context, rt *runtime, cli *whatsmeow.Client, jid types.JID, msg *waE2E.Message) (string, error) {
+	return m.send(ctx, rt, cli, jid, msg, true)
+}
+
+func (m *Manager) send(ctx context.Context, rt *runtime, cli *whatsmeow.Client, jid types.JID, msg *waE2E.Message, opener bool) (string, error) {
+	newChat := opener && m.isNewChat(ctx, rt, cli, jid)
 	var id string
-	err := m.throttled(ctx, rt, 1, func() error {
+	err := m.gate(ctx, rt, 1, newChat, func() error {
 		resp, err := cli.SendMessage(ctx, jid, msg)
 		if err != nil {
 			return fmt.Errorf("%w: %v", ErrSendFailed, err)
@@ -455,6 +498,9 @@ func (m *Manager) paced(ctx context.Context, rt *runtime, cli *whatsmeow.Client,
 		id = resp.ID
 		return nil
 	})
+	if err == nil && opener {
+		m.markChats(rt, chatForms(ctx, cli, jid)...)
+	}
 	return id, err
 }
 
@@ -462,6 +508,11 @@ func (m *Manager) paced(ctx context.Context, rt *runtime, cli *whatsmeow.Client,
 // group change) through the instance's queue and limits. units is how many messages it is
 // worth: adding 20 people to a group counts as 20.
 func (m *Manager) throttled(ctx context.Context, rt *runtime, units int, action func() error) error {
+	return m.gate(ctx, rt, units, false, action)
+}
+
+// gate is throttled, also told whether the request opens a chat with someone new.
+func (m *Manager) gate(ctx context.Context, rt *runtime, units int, newChat bool, action func() error) error {
 	rt.limMu.Lock()
 	fits := rt.limit.fits(units)
 	rt.limMu.Unlock()
@@ -483,8 +534,14 @@ func (m *Manager) throttled(ctx context.Context, rt *runtime, units int, action 
 	}
 	defer func() { <-rt.sendSlot }()
 
+	now := time.Now()
+	m.ensureDay(ctx, rt, now)
 	rt.limMu.Lock()
-	at := rt.limit.nextFor(time.Now(), units)
+	if err := m.dailyCheck(rt, now, units, newChat); err != nil {
+		rt.limMu.Unlock()
+		return err
+	}
+	at := rt.limit.nextFor(now, units)
 	rt.limMu.Unlock()
 	if wait := time.Until(at); wait > 0 {
 		if deadline, ok := ctx.Deadline(); ok && at.After(deadline) {
@@ -499,9 +556,12 @@ func (m *Manager) throttled(ctx context.Context, rt *runtime, units int, action 
 	err := action()
 	// Counted even when it failed: WhatsApp may have received it, and a number that is failing
 	// should slow down, not speed up.
+	sentAt := time.Now()
 	rt.limMu.Lock()
-	rt.limit.recordN(time.Now(), units)
+	rt.limit.recordN(sentAt, units)
 	rt.limMu.Unlock()
+	m.countSent(ctx, rt, sentAt, units, newChat)
+	m.noteResult(rt, err)
 	return err
 }
 
@@ -568,6 +628,10 @@ func (m *Manager) handle(rt *runtime, cli *whatsmeow.Client, evt any) {
 		if err := m.store.SetDevice(context.Background(), rt.rec.ID, e.ID.String()); err != nil {
 			m.log.Error("pair: could not save the linked device", "instance", rt.rec.ID, "error", err)
 		}
+		linked := time.Now()
+		rt.limMu.Lock()
+		rt.linked = &linked // a new link starts the daily allowance from day 0
+		rt.limMu.Unlock()
 		m.log.Info("instance linked", "instance", rt.rec.ID, "phone", e.ID.User)
 	case *events.Connected:
 		m.setStatus(rt, StatusConnected)
@@ -583,6 +647,9 @@ func (m *Manager) handle(rt *runtime, cli *whatsmeow.Client, evt any) {
 		rt.client = nil
 		rt.mu.Unlock()
 		_ = m.store.SetDevice(context.Background(), rt.rec.ID, "")
+		rt.limMu.Lock()
+		rt.linked = nil
+		rt.limMu.Unlock()
 		m.setStatus(rt, StatusLoggedOut)
 	case *events.Message:
 		d := Describe(e.Message)
@@ -614,6 +681,12 @@ func (m *Manager) handle(rt *runtime, cli *whatsmeow.Client, evt any) {
 				alt = e.Info.RecipientAlt
 			}
 			data["chatPn"] = phoneJID(ctx, lids, e.Info.Chat, alt)
+			// Whoever wrote to us, or got a message typed on the phone, is not a stranger.
+			forms := chatForms(ctx, cli, e.Info.Chat)
+			if pn, _ := data["chatPn"].(string); pn != "" {
+				forms = append(forms, pn)
+			}
+			m.markChats(rt, forms...)
 		}
 		if d.Target != "" {
 			data["target"] = d.Target
@@ -622,6 +695,16 @@ func (m *Manager) handle(rt *runtime, cli *whatsmeow.Client, evt any) {
 			data["replyTo"] = q // this message answers an earlier one
 		}
 		m.emit(rt, "message.received", data)
+	case *events.HistorySync:
+		// Right after linking, the phone sends its chat history: those conversations already
+		// exist, so messages to them are not first contacts.
+		var chats []string
+		for _, c := range e.Data.GetConversations() {
+			if jid, err := types.ParseJID(c.GetID()); err == nil && (jid.Server == types.DefaultUserServer || jid.Server == types.HiddenUserServer) {
+				chats = append(chats, jid.ToNonAD().String())
+			}
+		}
+		m.markChats(rt, chats...)
 	case *events.GroupInfo:
 		c := groupChange{Chat: e.JID.String(), JoinReason: e.JoinReason,
 			Join: jidStrings(e.Join), Leave: jidStrings(e.Leave), Promote: jidStrings(e.Promote), Demote: jidStrings(e.Demote),

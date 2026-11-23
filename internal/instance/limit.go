@@ -27,9 +27,10 @@ func (e *RateLimitError) Error() string {
 
 // SendStats is the current sending activity of an instance.
 type SendStats struct {
-	Queued     int `json:"queued"`     // requests waiting for their turn
-	LastMinute int `json:"lastMinute"` // messages sent in the last 60 seconds
-	LastHour   int `json:"lastHour"`   // messages sent in the last 60 minutes
+	Queued     int      `json:"queued"`     // requests waiting for their turn
+	LastMinute int      `json:"lastMinute"` // messages sent in the last 60 seconds
+	LastHour   int      `json:"lastHour"`   // messages sent in the last 60 minutes
+	Today      DayStats `json:"today"`      // the day's counters and limits (daily.go)
 }
 
 // sendLimiter keeps the send times of one instance (the last hour of them) and answers when

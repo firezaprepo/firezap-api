@@ -310,6 +310,6 @@ func (m *Manager) SendMedia(ctx context.Context, id, to string, out OutgoingMedi
 	if err != nil {
 		return Sent{}, fmt.Errorf("%w: media upload failed: %v", ErrSendFailed, err)
 	}
-	msgID, err := m.paced(ctx, rt, cli, jid, withContext(buildMediaMessage(out, up), ci))
+	msgID, err := m.pacedNew(ctx, rt, cli, jid, withContext(buildMediaMessage(out, up), ci))
 	return Sent{ID: msgID, To: jid.String()}, err
 }

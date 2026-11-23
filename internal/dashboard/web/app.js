@@ -135,14 +135,67 @@ function card(i) {
       el("span", { class: "badge " + i.status }, t("status_" + i.status))),
     el("dl", { class: "facts" },
       el("dt", {}, t("phone")), el("dd", {}, i.phone ? "+" + i.phone : t("none")),
-      el("dt", {}, t("webhook")), el("dd", {}, i.webhookUrl || t("none")),
-      el("dt", {}, t("sending")), el("dd", {}, t("sendingValue", { m: s.lastMinute, h: s.lastHour, q: s.queued }))),
+      el("dt", {}, t("webhook")), el("dd", {}, i.webhookUrl || t("none"), webhookState(i)),
+      el("dt", {}, t("sending")), el("dd", {}, t("sendingValue", { m: s.lastMinute, h: s.lastHour, q: s.queued })),
+      el("dt", {}, t("today")), el("dd", {}, todayText(s.today))),
+    pausedNotice(s.today),
     el("div", { class: "actions" },
       i.status !== "connected" ? el("button", { class: "primary", onclick: () => connectDialog(i) }, t("connect")) : null,
       i.status === "connected" ? el("button", { onclick: () => testDialog(i) }, t("sendTest")) : null,
       el("button", { onclick: () => webhookDialog(i) }, t("setWebhook")),
       linked ? el("button", { onclick: () => unlink(i) }, t("unlink")) : null,
       el("button", { class: "danger", onclick: () => removeDialog(i) }, t("remove"))));
+}
+
+// Today's sending against the daily limits (absent limits mean none is set).
+function todayText(d) {
+  d = d || { sent: 0, newChats: 0 };
+  const sent = d.sentLimit != null ? t("ofLimit", { n: d.sent, l: d.sentLimit }) : String(d.sent);
+  let txt = t("todaySent", { s: sent });
+  if (d.newChatLimit != null) txt += " · " + t("todayNewChats", { s: t("ofLimit", { n: d.newChats, l: d.newChatLimit }) });
+  if (d.linkedDays != null && (d.sentLimit != null || d.newChatLimit != null)) txt += " · " + t("linkedDay", { d: d.linkedDays + 1 });
+  return txt;
+}
+
+function pausedNotice(d) {
+  if (!d || !d.pausedUntil) return null;
+  const until = new Date(d.pausedUntil).toLocaleTimeString(lang, { hour: "2-digit", minute: "2-digit" });
+  return el("p", { class: "notice" }, t("pausedUntil", { t: until }));
+}
+
+// Events waiting for the webhook and the ones that gave up, with a way to see them.
+function webhookState(i) {
+  const w = i.webhook || {};
+  if (!w.pending && !w.failed) return null;
+  const parts = [];
+  if (w.pending) parts.push(t("whPending", { n: w.pending }));
+  if (w.failed) parts.push(t("whFailed", { n: w.failed }));
+  return el("span", {}, " · " + parts.join(" · ") + " ",
+    w.failed ? el("button", { class: "link", onclick: () => failuresDialog(i) }, t("whSee")) : null);
+}
+
+async function failuresDialog(i) {
+  let data;
+  try { data = await api("GET", inst(i.id) + "/webhook/failures?limit=100"); } catch (e) { toast(e.message); return; }
+  const list = (data && data.failures) || [];
+  const when = (v) => (v ? new Date(v).toLocaleString(lang) : "");
+  const act = async (what) => {
+    try {
+      const res = await api("POST", inst(i.id) + "/webhook/failures/" + what);
+      closeDialog();
+      toast(what === "retry" ? t("whRequeued", { n: res.requeued }) : t("whDiscarded", { n: res.discarded }));
+      refresh();
+    } catch (e) { toast(e.message); }
+  };
+  openDialog(t("whFailuresTitle", { id: i.id }),
+    el("p", { class: "muted small" }, t("whFailuresHelp")),
+    list.length ? el("ul", { class: "failures" }, ...list.map((f) =>
+      el("li", {}, el("strong", {}, f.event), " · ", when(f.failedAt || f.createdAt), " · ", t("whAttempts", { n: f.attempts }),
+        el("div", { class: "muted small" }, f.lastError)))) : el("p", {}, t("none")),
+    el("div", { class: "row" },
+      list.length ? el("button", { class: "primary", onclick: () => act("retry") }, t("whRetryAll")) : null,
+      list.length ? el("button", { class: "danger", onclick: () => { if (window.confirm(t("whConfirmDiscard"))) act("discard"); } }, t("whDiscardAll")) : null,
+      el("button", { onclick: closeDialog }, t("done"))));
 }
 
 // ── Dialog ───────────────────────────────────────────────────────────────────

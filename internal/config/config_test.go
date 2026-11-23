@@ -107,3 +107,41 @@ func TestMediaMaxMB(t *testing.T) {
 		}
 	}
 }
+
+func TestDailySchedulesAndPause(t *testing.T) {
+	base := map[string]string{"FZ_ADMIN_KEY": strings.Repeat("k", 32), "DATABASE_URL": "postgres://u:p@localhost/db"}
+	cfg, err := load(env(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SendDailySchedule != nil || cfg.SendNewChatSchedule != nil {
+		t.Fatalf("daily limits must be off by default: %+v", cfg)
+	}
+	if cfg.SendBreakerThreshold != 5 || cfg.SendBreakerCooldown != 15*time.Minute || cfg.WebhookFailedRetention != 72*time.Hour {
+		t.Fatalf("unexpected defaults: %+v", cfg)
+	}
+
+	with := func(k, v string) map[string]string {
+		m := map[string]string{}
+		for a, b := range base {
+			m[a] = b
+		}
+		m[k] = v
+		return m
+	}
+	cfg, err = load(env(with("SEND_DAILY_SCHEDULE", " 20, 40 ,80 ")))
+	if err != nil || len(cfg.SendDailySchedule) != 3 || cfg.SendDailySchedule[2] != 80 {
+		t.Fatalf("schedule not read: %v %v", cfg.SendDailySchedule, err)
+	}
+	for _, bad := range []string{"20,abc", "40,20", "0,10", "-5", strings.Repeat("1,", 400) + "1"} {
+		if _, err := load(env(with("SEND_NEW_CHAT_SCHEDULE", bad))); err == nil {
+			t.Errorf("SEND_NEW_CHAT_SCHEDULE=%q must be refused", bad)
+		}
+	}
+	if cfg, err := load(env(with("SEND_PAUSE_AFTER_FAILURES", "0"))); err != nil || cfg.SendBreakerThreshold != 0 {
+		t.Fatalf("0 must turn the pause off: %v", err)
+	}
+	if cfg, err := load(env(with("WEBHOOK_FAILED_RETENTION_HOURS", "0"))); err != nil || cfg.WebhookFailedRetention != 0 {
+		t.Fatalf("0 must turn the retention off: %v", err)
+	}
+}

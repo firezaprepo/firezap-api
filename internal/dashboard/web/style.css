@@ -72,3 +72,6 @@ dialog::backdrop { background: rgba(10, 14, 24, .55); }
 .tabs button[aria-selected=true] { border-color: var(--brand); color: var(--brand); font-weight: 600; }
 #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 8px; max-width: calc(100vw - 32px); }
 @media (max-width: 520px) { .top { padding: 10px 12px; } .brand small { display: none; } select#lang { max-width: 128px; } }
+button.link { background: none; border: 0; padding: 0; color: var(--brand); text-decoration: underline; cursor: pointer; font: inherit; }
+ul.failures { list-style: none; padding: 0; margin: 8px 0; max-height: 50vh; overflow: auto; font-size: .9rem; }
+ul.failures li { padding: 6px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }

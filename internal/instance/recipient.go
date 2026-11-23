@@ -140,6 +140,10 @@ func (m *Manager) recipient(ctx context.Context, rt *runtime, cli *whatsmeow.Cli
 		return jid, nil
 	}
 	now := time.Now()
+	// A paused instance does not even look numbers up: the lookups are traffic too.
+	if err := m.pausedError(rt, now); err != nil {
+		return jid, err
+	}
 	rt.dirMu.Lock()
 	e, fresh := rt.dir.get(jid.User, now)
 	rt.dirMu.Unlock()
@@ -154,7 +158,9 @@ func (m *Manager) recipient(ctx context.Context, rt *runtime, cli *whatsmeow.Cli
 		rt.dirMu.Unlock()
 	}
 	if e.jid.IsEmpty() {
-		return jid, fmt.Errorf("%w: %s (checked with and without the ninth digit)", ErrNotOnWhatsApp, "+"+jid.User)
+		err := fmt.Errorf("%w: %s (checked with and without the ninth digit)", ErrNotOnWhatsApp, "+"+jid.User)
+		m.noteResult(rt, err) // a run of numbers that are not on WhatsApp is a bad list: pause
+		return jid, err
 	}
 	return e.jid, nil
 }

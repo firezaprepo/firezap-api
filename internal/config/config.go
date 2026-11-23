@@ -38,6 +38,51 @@ type Config struct {
 	// MediaMaxBytes is the largest attachment the API sends or downloads. Files are held in
 	// memory while sent, so this also bounds memory per request.
 	MediaMaxBytes int64
+
+	// SendDailySchedule is the most messages an instance sends per day, by how many days ago its
+	// number was linked: the first value is day 0, the last one holds from then on. Empty = no
+	// daily limit. A freshly linked number that sends like an old one is what WhatsApp's
+	// anti-abuse looks for; growing the allowance day by day protects it.
+	SendDailySchedule []int
+	// SendNewChatSchedule is the same, counting only first messages to private chats this number
+	// never talked to. Empty = no limit. Messaging strangers is the strongest spam signal.
+	SendNewChatSchedule []int
+	// SendBreakerThreshold failed sends in a row (WhatsApp refused, or the number is not on
+	// WhatsApp) pause the instance's sending for SendBreakerCooldown. 0 = never pause.
+	SendBreakerThreshold int
+	SendBreakerCooldown  time.Duration
+
+	// WebhookFailedRetention is how long events that could not be delivered are kept for a
+	// retry from the dashboard or the API. 0 = drop them once the last attempt fails.
+	WebhookFailedRetention time.Duration
+}
+
+// maxScheduleDays bounds the schedules: a year of daily values is far more than anyone needs.
+const maxScheduleDays = 366
+
+// parseSchedule reads "20,40,80" into [20 40 80]. Empty means no limit. Values must be
+// positive and never decrease: a number does not become less trusted as it gets older.
+func parseSchedule(key, raw string) ([]int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "0" {
+		return nil, nil
+	}
+	parts := strings.Split(raw, ",")
+	if len(parts) > maxScheduleDays {
+		return nil, fmt.Errorf("%s has more than %d values", key, maxScheduleDays)
+	}
+	out := make([]int, len(parts))
+	for i, p := range parts {
+		n, err := strconv.Atoi(strings.TrimSpace(p))
+		if err != nil || n < 1 || n > 1000000 {
+			return nil, fmt.Errorf("%s must be a comma-separated list of positive numbers (e.g. 20,40,80)", key)
+		}
+		if i > 0 && n < out[i-1] {
+			return nil, fmt.Errorf("%s must not decrease from one day to the next", key)
+		}
+		out[i] = n
+	}
+	return out, nil
 }
 
 // minAdminKeyLength guards against weak admin keys: the admin key controls every instance.
@@ -109,6 +154,16 @@ func load(getenv func(string) string) (Config, error) {
 		errs = append(errs, errors.New("MEDIA_MAX_MB must be between 1 and 100"))
 	}
 	cfg.MediaMaxBytes = int64(mediaMB) << 20
+
+	if cfg.SendDailySchedule, err = parseSchedule("SEND_DAILY_SCHEDULE", getenv("SEND_DAILY_SCHEDULE")); err != nil {
+		errs = append(errs, err)
+	}
+	if cfg.SendNewChatSchedule, err = parseSchedule("SEND_NEW_CHAT_SCHEDULE", getenv("SEND_NEW_CHAT_SCHEDULE")); err != nil {
+		errs = append(errs, err)
+	}
+	cfg.SendBreakerThreshold = intIn("SEND_PAUSE_AFTER_FAILURES", "5", 0, 1000)
+	cfg.SendBreakerCooldown = time.Duration(intIn("SEND_PAUSE_MINUTES", "15", 1, 1440)) * time.Minute
+	cfg.WebhookFailedRetention = time.Duration(intIn("WEBHOOK_FAILED_RETENTION_HOURS", "72", 0, 720)) * time.Hour
 
 	switch strings.ToLower(get("WEBHOOK_ALLOW_PRIVATE", "false")) {
 	case "true", "1", "yes":

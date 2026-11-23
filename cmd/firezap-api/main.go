@@ -16,9 +16,12 @@ import (
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // registers the "pgx" database/sql driver
+	// Time zones inside the binary: the daily limits restart at midnight in TZ, and the image
+	// has no zoneinfo of its own.
 	wastore "go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	waLog "go.mau.fi/whatsmeow/util/log"
+	_ "time/tzdata"
 
 	"github.com/firezaprepo/firezap-api/internal/config"
 	"github.com/firezaprepo/firezap-api/internal/dashboard"
@@ -71,7 +74,9 @@ func run() error {
 		return fmt.Errorf("prepare session store: %w", err)
 	}
 
-	hooks := webhook.NewDispatcher(cfg.WebhookTimeout, log, webhook.AddressPolicy{AllowPrivate: cfg.WebhookAllowPrivate})
+	hooks := webhook.NewDispatcher(cfg.WebhookTimeout, log, webhook.AddressPolicy{AllowPrivate: cfg.WebhookAllowPrivate}).
+		WithQueue(st.Outbox(), cfg.WebhookFailedRetention)
+	go hooks.Run(ctx)
 	if cfg.WebhookAllowPrivate {
 		log.Warn("WEBHOOK_ALLOW_PRIVATE is on: webhooks may reach loopback and private networks")
 	}
@@ -80,6 +85,11 @@ func run() error {
 		PerMinute:   cfg.SendMaxPerMinute,
 		PerHour:     cfg.SendMaxPerHour,
 		QueueMax:    cfg.SendQueueMax,
+	}, instance.DailyLimits{
+		Schedule:        cfg.SendDailySchedule,
+		NewChatSchedule: cfg.SendNewChatSchedule,
+		PauseAfter:      cfg.SendBreakerThreshold,
+		PauseFor:        cfg.SendBreakerCooldown,
 	})
 	if err := manager.Restore(ctx); err != nil {
 		return fmt.Errorf("restore instances: %w", err)

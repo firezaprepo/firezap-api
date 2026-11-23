@@ -84,7 +84,7 @@ Planejados para as primeiras versões:
 - Ler os dados do grupo e a lista de participantes
 
 **Integrações**
-- Webhooks para todos os eventos, com novas tentativas e assinatura
+- Webhooks para todos os eventos, com assinatura e caixa de saída: nada se perde se o servidor reiniciar ou o receptor cair, e o que desistiu pode ser reenviado
 - API REST com especificação OpenAPI (Swagger)
 - Chave de API por instância e uma chave geral de administrador
 
@@ -187,7 +187,13 @@ Toda a configuração vem de variáveis de ambiente (`.env`). A lista completa v
 | `SEND_MAX_PER_MINUTE` | Máximo de mensagens que uma instância envia em quaisquer 60 segundos (`0` = sem limite) | `30` |
 | `SEND_MAX_PER_HOUR` | Máximo de mensagens que uma instância envia em quaisquer 60 minutos (`0` = sem limite) | `600` |
 | `SEND_QUEUE_MAX` | Máximo de pedidos de envio esperando a vez em cada instância; os demais recebem `429` | `50` |
+| `SEND_DAILY_SCHEDULE` | Máximo de mensagens por dia, pelos dias desde que o número foi vinculado (ex.: `20,40,80,160,320,640,1000`: 20 no primeiro dia, 1000 do 7º em diante). Vazio = sem limite diário. Ver [Limites de envio](#limites-de-envio) | vazio |
+| `SEND_NEW_CHAT_SCHEDULE` | O mesmo, contando só a primeira mensagem para conversas privadas com quem o número nunca falou (ex.: `5,10,20,40,60,80,100`). Vazio = sem limite | vazio |
+| `SEND_PAUSE_AFTER_FAILURES` | Falhas de envio seguidas (o WhatsApp recusou, ou o número não está no WhatsApp) que pausam os envios da instância. `0` = nunca pausa | `5` |
+| `SEND_PAUSE_MINUTES` | Duração dessa pausa, em minutos | `15` |
+| `TZ` | Fuso do dia usado pelos limites diários (ex.: `America/Sao_Paulo`) | `UTC` |
 | `WEBHOOK_TIMEOUT` | Tempo limite do webhook, em segundos | `10` |
+| `WEBHOOK_FAILED_RETENTION_HOURS` | Por quanto tempo os eventos que não foram entregues ficam guardados para reenvio (`0` = descarta) | `72` |
 | `WEBHOOK_ALLOW_PRIVATE` | Permite webhook para loopback e redes privadas (mesma máquina ou rede Docker). Deixe `false` se outras pessoas puderem configurar webhooks; os metadados da nuvem continuam bloqueados | `false` |
 | `DEFAULT_LANGUAGE` | Idioma do painel: `en` ou `pt-BR` | `en` |
 | `LOG_LEVEL` | `debug`, `info`, `warn` ou `error` | `info` |
@@ -228,6 +234,9 @@ um arquivo OpenAPI.
 | `POST` | `/instances/{id}/groups/join` | Entrar num grupo pelo link de convite |
 | `POST` | `/instances/{id}/groups/{jid}/leave` | Sair de um grupo |
 | `PUT` | `/instances/{id}/webhook` | Configurar o webhook |
+| `GET` | `/instances/{id}/webhook/failures` | Eventos que não foram entregues |
+| `POST` | `/instances/{id}/webhook/failures/retry` | Reenviar eventos que falharam (todos, ou `{"ids": [...]}`) |
+| `POST` | `/instances/{id}/webhook/failures/discard` | Apagar eventos que falharam (todos, ou `{"ids": [...]}`) |
 
 Exemplo — enviar uma mensagem de texto:
 
@@ -257,6 +266,7 @@ Cada instância pode enviar os eventos para um endereço da sua escolha:
 | `connection.update` | A instância conectou, desconectou ou precisa de um QR code novo |
 | `group.update` | Mudou o nome, a descrição, as configurações ou os membros de um grupo, ou este número entrou num grupo |
 | `call.received` | Chegou uma ligação (registrada; a API não atende ligações) |
+| `send.paused` | Os envios foram pausados depois de falhas seguidas (`failures`, `until`, `lastError`) — ver [Limites de envio](#limites-de-envio) |
 
 `message.received` traz `sender`/`chat` como o WhatsApp manda — muitas vezes um LID (`…@lid`), que não é número de telefone — e também `senderPn` e, em conversa privada, `chatPn` com o JID do telefone quando ele é conhecido. `chatType` diz o tipo de conversa: `private`, `group`, `status` (Status do WhatsApp), `broadcast` ou `newsletter` (Canal) — filtre os que você não trata. Mensagens apagadas e editadas chegam com `type` `revoke` ou `edit` e o id da mensagem afetada em `target`; reações chegam com `type` `reaction`, o emoji em `text` (vazio quando a reação foi retirada) e a mensagem reagida em `target`. Uma mensagem que responde a outra traz `replyTo` com o `id` e o `participant` da mensagem respondida.
 
@@ -265,8 +275,19 @@ Cada instância pode enviar os eventos para um endereço da sua escolha:
 O endereço do webhook precisa ser `http` ou `https` e não pode apontar para loopback, redes privadas ou link-local (ver `WEBHOOK_ALLOW_PRIVATE`). O segredo que você envia nunca é devolvido; se você deixar em branco, um é gerado e mostrado uma única vez.
 
 Toda chamada leva o cabeçalho `X-FireZAP-Signature` (HMAC-SHA256 do corpo com o segredo do seu
-webhook), para você confirmar que ela veio do seu servidor. Entregas que falham são reenviadas
-com intervalos crescentes.
+webhook), para você confirmar que ela veio do seu servidor.
+
+**Entrega.** Todo evento é gravado numa caixa de saída no banco antes de sair, e apagado assim que
+o seu servidor responde `2xx`. Se não responder, o evento é tentado de novo depois de 5 s, 30 s,
+2 min, 10 min, 30 min e 1 h (cerca de 1 h 40 min no total); reiniciar a API no meio não perde
+nada. O que ainda falhar fica guardado por `WEBHOOK_FAILED_RETENTION_HOURS` (72 por padrão):
+liste com `GET /instances/{id}/webhook/failures` e reenvie (`…/retry`) ou descarte (`…/discard`) —
+ou faça isso pelo painel. O reenvio vai para a URL configurada *agora*, então basta corrigir uma
+URL errada. A caixa de saída guarda o evento só até ele ser entregue; não é histórico de mensagens.
+
+A entrega é **pelo menos uma vez**: um evento cuja resposta se perdeu pode chegar duas vezes. Todo
+evento tem um `id` único — ignore um `id` que você já processou. `GET /instances/{id}` mostra
+`webhook.pending` e `webhook.failed`.
 
 ## Mídia
 
@@ -368,6 +389,30 @@ instância: uma por vez, na ordem de chegada, respeitando `SEND_MIN_INTERVAL_MS`
 `SEND_MAX_PER_MINUTE` e `SEND_MAX_PER_HOUR`. Cada instância tem os seus contadores, então um
 número movimentado nunca atrasa os outros.
 
+Outros três limites valem de um dia para o outro. Eles existem porque um número recém-vinculado
+que envia como um antigo, ou que escreve para muitos desconhecidos, é o primeiro que o WhatsApp
+restringe:
+
+- **Cota diária pela idade do vínculo** (`SEND_DAILY_SCHEDULE`, desligado por padrão). O primeiro
+  valor é o limite no dia em que o número foi vinculado, o segundo no dia seguinte, e assim por
+  diante; o último vale dali em diante. Vincular o número de novo recomeça do primeiro valor.
+- **Conversas novas por dia** (`SEND_NEW_CHAT_SCHEDULE`, desligado por padrão). Conta só texto e
+  mídia que abrem uma conversa privada com quem o número nunca falou — quem escreveu para ele,
+  recebeu mensagem dele ou estava no histórico que o celular mandou ao vincular não é novo. Grupos
+  nunca contam. A API guarda a lista das conversas (o identificador do WhatsApp) com quem cada
+  número falou, nunca as mensagens.
+- **Pausa depois de falhas** (`SEND_PAUSE_AFTER_FAILURES`, ligado: 5 seguidas). Contam número fora
+  do WhatsApp e mensagem que o WhatsApp recusou; um envio que dá certo zera a contagem. Durante a
+  pausa, envios e consultas de número respondem `429`, e o evento de webhook `send.paused` avisa o
+  seu sistema. Uma sequência de números fora do WhatsApp quase sempre é lista ruim.
+
+O dia recomeça à meia-noite no fuso do servidor (`TZ`, UTC se não for definido). Acima de um
+limite diário a API responde `429` com `Retry-After` apontando para a meia-noite.
+`GET /instances/{id}` mostra o dia em `sending.today`: `sent`, `newChats`, os limites que valem
+(`sentLimit`, `newChatLimit`), `linkedDays`, `failuresInARow` e `pausedUntil`. Valores sugeridos
+para um número novo: `SEND_DAILY_SCHEDULE=20,40,80,160,320,640,1000` e
+`SEND_NEW_CHAT_SCHEDULE=5,10,20,40,60,80,100`.
+
 O pedido espera a vez enquanto isso cabe no tempo limite dele. Quando a fila está cheia
 (`SEND_QUEUE_MAX`) ou os limites segurariam a mensagem por tempo demais, a API responde
 `429 Too Many Requests` com o cabeçalho `Retry-After` e `retryAfter` (segundos) no corpo —
@@ -385,15 +430,17 @@ instalador). Entre com a chave de administrador. Ele permite:
 
 - Criar instâncias (a chave de API da instância aparece uma única vez), conectar por QR code ou
   código de pareamento, desvincular o número e apagar
-- Ver o estado, o número, o webhook e os envios de cada instância, atualizados a cada 5 segundos
+- Ver o estado, o número, o webhook e os envios de cada instância — inclusive a contagem do dia
+  contra os limites diários e a pausa depois de falhas —, atualizados a cada 5 segundos
 - Configurar a URL e o segredo do webhook
+- Ver os eventos de webhook que não foram entregues, e reenviar ou descartar
 - Enviar uma mensagem de teste
 
 A chave de administrador fica só naquela aba do navegador (`sessionStorage`) e é esquecida
 quando a aba fecha. As páginas não carregam nada de outros sites e rodam com uma
 Content-Security-Policy rígida.
 
-Planejado: logs recentes e entregas de webhook que falharam.
+Planejado: logs recentes.
 
 A interface está disponível em **inglês** e **português (Brasil)** — escolha no próprio painel
 ou defina `DEFAULT_LANGUAGE`.
@@ -415,10 +462,10 @@ para burlar os sistemas anti-abuso do WhatsApp (disfarce de aparelho, atividade 
 de emuladores). O que ele tem, para proteger você e os seus contatos:
 
 - Limites de envio por instância: intervalo mínimo, por minuto e por hora (ver [Limites de envio](#limites-de-envio))
+- Cota diária que cresce com a idade do vínculo, limite diário de primeiras mensagens para desconhecidos e pausa depois de falhas seguidas
 
 Planejado:
 
-- Limites graduais para números recém-conectados
 - Opt-out: quem responde com uma palavra de parada não recebe mais mensagens
 - Registro claro de tudo o que foi enviado
 
@@ -430,7 +477,7 @@ software e por cumprir os termos do WhatsApp e as leis de privacidade, como a LG
 - [x] **v0.1** — Instâncias (QR e código de pareamento), envio de texto, recebimento, webhooks, sessão persistente
 - [x] **v0.2** — Mídia, áudio, reações, confirmações, fila de envio com limites
 - [x] **v0.3** — Grupos (criar, gerenciar participantes, links de convite)
-- [ ] **v0.4** — Painel (inglês e português)
+- [x] **v0.4** — Painel (inglês e português), instalador, limites diários e caixa de saída de webhooks
 - [ ] **v0.5** — Modo Cloud API (oficial) nos mesmos endpoints
 - [ ] **v1.0** — Referência OpenAPI, imagem Docker, ajustes para produção
 

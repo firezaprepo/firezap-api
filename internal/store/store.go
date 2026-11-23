@@ -23,6 +23,9 @@ type Instance struct {
 	WebhookURL    string
 	WebhookSecret string
 	CreatedAt     time.Time
+	// LinkedAt is when the current number was linked (nil while none is). Sending limits
+	// that grow with the age of the link count from here.
+	LinkedAt *time.Time
 }
 
 // Store reads and writes instance records.
@@ -46,7 +49,10 @@ CREATE TABLE IF NOT EXISTS fz_instances (
 	created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS fz_instances_api_key_hash_idx ON fz_instances (api_key_hash);
-`
+ALTER TABLE fz_instances ADD COLUMN IF NOT EXISTS linked_at TIMESTAMPTZ;
+-- Instances linked before linked_at existed count from their creation.
+UPDATE fz_instances SET linked_at = created_at WHERE device_jid IS NOT NULL AND linked_at IS NULL;
+` + pacingSchema + outboxSchema
 
 // Migrate creates the tables this package needs. It is safe to run on every start.
 func (s *Store) Migrate(ctx context.Context) error {
@@ -54,11 +60,11 @@ func (s *Store) Migrate(ctx context.Context) error {
 	return err
 }
 
-const columns = `id, name, api_key_hash, COALESCE(device_jid, ''), webhook_url, webhook_secret, created_at`
+const columns = `id, name, api_key_hash, COALESCE(device_jid, ''), webhook_url, webhook_secret, created_at, linked_at`
 
 func scan(row interface{ Scan(...any) error }) (Instance, error) {
 	var in Instance
-	err := row.Scan(&in.ID, &in.Name, &in.APIKeyHash, &in.DeviceJID, &in.WebhookURL, &in.WebhookSecret, &in.CreatedAt)
+	err := row.Scan(&in.ID, &in.Name, &in.APIKeyHash, &in.DeviceJID, &in.WebhookURL, &in.WebhookSecret, &in.CreatedAt, &in.LinkedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return in, ErrNotFound
 	}
@@ -117,13 +123,14 @@ func (s *Store) exec(ctx context.Context, query string, args ...any) error {
 	return nil
 }
 
-// SetDevice records the WhatsApp device linked to the instance ("" clears it).
+// SetDevice records the WhatsApp device linked to the instance ("" clears it). Linking starts
+// the age of the link over: it may be another number, and a number unlinked and linked again
+// is treated as new.
 func (s *Store) SetDevice(ctx context.Context, id, jid string) error {
-	var value any
-	if jid != "" {
-		value = jid
+	if jid == "" {
+		return s.exec(ctx, `UPDATE fz_instances SET device_jid = NULL, linked_at = NULL WHERE id = $1`, id)
 	}
-	return s.exec(ctx, `UPDATE fz_instances SET device_jid = $2 WHERE id = $1`, id, value)
+	return s.exec(ctx, `UPDATE fz_instances SET device_jid = $2, linked_at = now() WHERE id = $1`, id, jid)
 }
 
 // SetWebhook stores where the instance sends its events.

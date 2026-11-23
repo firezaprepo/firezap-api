@@ -84,7 +84,7 @@ Planned for the first releases:
 - Read group metadata and participant lists
 
 **Integrations**
-- Webhooks for every event, with retries and signature verification
+- Webhooks for every event, with signature verification and an outbox: nothing is lost when the server restarts or the receiver is down, and events that give up can be sent again
 - REST API with an OpenAPI (Swagger) specification
 - API keys per instance and a global admin key
 
@@ -185,7 +185,13 @@ All settings come from environment variables (`.env`). The full list will live i
 | `SEND_MAX_PER_MINUTE` | Most messages one instance sends in any 60 seconds (`0` = no limit) | `30` |
 | `SEND_MAX_PER_HOUR` | Most messages one instance sends in any 60 minutes (`0` = no limit) | `600` |
 | `SEND_QUEUE_MAX` | Most send requests waiting for their turn per instance; more get `429` | `50` |
+| `SEND_DAILY_SCHEDULE` | Most messages per day, by days since the number was linked (e.g. `20,40,80,160,320,640,1000`: 20 on the first day, 1000 from the 7th on). Empty = no daily limit. See [Sending limits](#sending-limits) | empty |
+| `SEND_NEW_CHAT_SCHEDULE` | Same, counting only first messages to private chats the number never talked to (e.g. `5,10,20,40,60,80,100`). Empty = no limit | empty |
+| `SEND_PAUSE_AFTER_FAILURES` | Failed sends in a row (WhatsApp refused, or the number is not on WhatsApp) that pause the instance's sending. `0` = never pause | `5` |
+| `SEND_PAUSE_MINUTES` | How long that pause lasts, in minutes | `15` |
+| `TZ` | Time zone of the day used by the daily limits (e.g. `America/Sao_Paulo`) | `UTC` |
 | `WEBHOOK_TIMEOUT` | Webhook request timeout, in seconds | `10` |
+| `WEBHOOK_FAILED_RETENTION_HOURS` | How long events that could not be delivered are kept to be sent again (`0` = drop them) | `72` |
 | `WEBHOOK_ALLOW_PRIVATE` | Allow webhooks to loopback and private networks (same host or Docker network). Keep `false` if other people can set webhooks; cloud metadata stays blocked | `false` |
 | `DEFAULT_LANGUAGE` | Dashboard language: `en` or `pt-BR` | `en` |
 | `LOG_LEVEL` | `debug`, `info`, `warn` or `error` | `info` |
@@ -225,6 +231,9 @@ instance key for instance routes. The complete reference will be published as an
 | `POST` | `/instances/{id}/groups/join` | Join a group with an invite link |
 | `POST` | `/instances/{id}/groups/{jid}/leave` | Leave a group |
 | `PUT` | `/instances/{id}/webhook` | Configure the webhook |
+| `GET` | `/instances/{id}/webhook/failures` | Events that could not be delivered |
+| `POST` | `/instances/{id}/webhook/failures/retry` | Send failed events again (all, or `{"ids": [...]}`) |
+| `POST` | `/instances/{id}/webhook/failures/discard` | Delete failed events (all, or `{"ids": [...]}`) |
 
 Example — send a text message:
 
@@ -254,6 +263,7 @@ Each instance can send events to a URL of your choice:
 | `connection.update` | The instance connected, disconnected or needs a new QR code |
 | `group.update` | Group name, description, settings or members changed, or this number joined a group |
 | `call.received` | Incoming call (logged; calls are not answered by the API) |
+| `send.paused` | Sending was paused after failed sends in a row (`failures`, `until`, `lastError`) — see [Sending limits](#sending-limits) |
 
 `message.received` carries `sender`/`chat` as WhatsApp sends them — often a LID (`…@lid`), which is not a phone number — plus `senderPn` and, in private chats, `chatPn` with the phone-number JID when it is known. `chatType` says what kind of chat it is: `private`, `group`, `status` (WhatsApp Status), `broadcast` or `newsletter` (a Channel) — filter out the ones you do not handle. Deleted and edited messages arrive with `type` `revoke` or `edit` and the affected message id in `target`; reactions arrive with `type` `reaction`, the emoji in `text` (empty when the reaction was removed) and the message reacted to in `target`. A message that answers an earlier one carries `replyTo` with that message's `id` and `participant`.
 
@@ -262,8 +272,20 @@ Each instance can send events to a URL of your choice:
 The webhook URL must be an `http` or `https` address that does not point to loopback, private or link-local networks (see `WEBHOOK_ALLOW_PRIVATE`). The secret you send is never echoed back; if you leave it empty, one is generated and shown once.
 
 Every request carries an `X-FireZAP-Signature` header (HMAC-SHA256 of the body with your
-webhook secret), so you can confirm it came from your server. Failed deliveries are retried
-with exponential backoff.
+webhook secret), so you can confirm it came from your server.
+
+**Delivery.** Every event is written to an outbox in the database before it is sent, and
+removed as soon as your server answers `2xx`. If it does not, the event is tried again after 5 s,
+30 s, 2 min, 10 min, 30 min and 1 h (about 1 h 40 min in all); a restart of the API in the middle
+loses nothing. Events that still fail are kept for `WEBHOOK_FAILED_RETENTION_HOURS` (72 by
+default): list them with `GET /instances/{id}/webhook/failures`, and send them again (`…/retry`)
+or drop them (`…/discard`) — or do it in the dashboard. Retries go to the webhook URL configured
+*now*, so fixing a wrong URL is enough. The outbox keeps an event only until it is delivered; it
+is not a message history.
+
+Delivery is **at least once**: an event whose answer was lost may arrive twice. Every event has a
+unique `id` — ignore an `id` you already processed. `GET /instances/{id}` shows `webhook.pending`
+and `webhook.failed`.
 
 ## Media
 
@@ -360,6 +382,29 @@ instance: one at a time, in arrival order, respecting `SEND_MIN_INTERVAL_MS`,
 `SEND_MAX_PER_MINUTE` and `SEND_MAX_PER_HOUR`. Each instance has its own counters, so a busy
 number never slows down the others.
 
+Three more limits work across days. They exist because a number that was just linked and sends
+like an old one, or that writes to many strangers, is what WhatsApp restricts first:
+
+- **Daily allowance by age of the link** (`SEND_DAILY_SCHEDULE`, off by default). The first value
+  is the limit on the day the number was linked, the second on the next day, and so on; the last
+  value holds from then on. Linking the number again starts over from the first value.
+- **New chats per day** (`SEND_NEW_CHAT_SCHEDULE`, off by default). Counts only text and media
+  that open a private chat the number never talked to — someone who wrote to it, received a
+  message from it, or was in the chat history the phone sent when it was linked is not new.
+  Groups never count. The API keeps a list of the chats (their WhatsApp ids) each number talked
+  to, never the messages.
+- **Pause after failures** (`SEND_PAUSE_AFTER_FAILURES`, on: 5 in a row). Numbers that are not
+  on WhatsApp and messages WhatsApp refused count; a successful send resets the count. While
+  paused, sends and number lookups answer `429`, and a `send.paused` webhook event tells your
+  system. A run of numbers that are not on WhatsApp usually means a bad list.
+
+The day restarts at midnight in the server's time zone (`TZ`, UTC unless set). Over a daily
+limit the API answers `429` with `Retry-After` pointing to midnight. `GET /instances/{id}` shows
+the day in `sending.today`: `sent`, `newChats`, the limits that apply (`sentLimit`,
+`newChatLimit`), `linkedDays`, `failuresInARow` and `pausedUntil`. Suggested values for a new
+number: `SEND_DAILY_SCHEDULE=20,40,80,160,320,640,1000` and
+`SEND_NEW_CHAT_SCHEDULE=5,10,20,40,60,80,100`.
+
 A request waits for its turn while that fits in its time limit. When the queue is full
 (`SEND_QUEUE_MAX`) or the limits would hold the message too long, the API answers
 `429 Too Many Requests` with a `Retry-After` header and `retryAfter` (seconds) in the body —
@@ -377,14 +422,16 @@ the installer). Sign in with the admin key. It lets you:
 
 - Create instances (the instance API key is shown once), connect them by QR code or pairing
   code, unlink the number and delete them
-- See each instance's status, number, webhook and sending activity, refreshed every 5 seconds
+- See each instance's status, number, webhook and sending activity — including today's count
+  against the daily limits and a pause after failures — refreshed every 5 seconds
 - Set the webhook URL and secret
+- See webhook events that could not be delivered, and send them again or discard them
 - Send a test message
 
 The admin key stays only in that browser tab (`sessionStorage`) and is forgotten when the tab
 closes. The pages load nothing from other sites and run under a strict Content-Security-Policy.
 
-Planned: recent logs and failed webhook deliveries.
+Planned: recent logs.
 
 The interface is available in **English** and **Portuguese (Brazil)** — choose it in the
 dashboard or set `DEFAULT_LANGUAGE`.
@@ -406,10 +453,10 @@ include features to evade WhatsApp's anti-abuse systems (device spoofing, fake a
 emulator farms). What it includes, to protect you and your contacts:
 
 - Sending limits per instance: minimum interval, per minute and per hour (see [Sending limits](#sending-limits))
+- Daily limits that grow with the age of the link, a daily limit of first messages to strangers, and a pause after failed sends in a row
 
 Planned:
 
-- Gradual limits for newly connected numbers
 - Opt-out handling: contacts who reply with a stop word are not messaged again
 - Clear logs of everything that was sent
 
@@ -422,7 +469,7 @@ and the GDPR (EU).
 - [x] **v0.1** — Instances (QR and pairing code), text messages, receiving messages, webhooks, persistent sessions
 - [x] **v0.2** — Media, audio, reactions, receipts, send queue with rate limits
 - [x] **v0.3** — Groups (create, manage participants, invite links)
-- [ ] **v0.4** — Dashboard (English and Portuguese)
+- [x] **v0.4** — Dashboard (English and Portuguese), installer, daily limits and webhook outbox
 - [ ] **v0.5** — Cloud API (official) mode behind the same endpoints
 - [ ] **v1.0** — OpenAPI reference, Docker image, production hardening
 
